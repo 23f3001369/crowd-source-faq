@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-route
 import { AuthProvider, useAuth } from './hooks/useAuth';
 import { AuthModalProvider, useAuthModal } from './context/AuthModalContext';
 import { BatchProvider } from './context/BatchContext';
+import { FeatureFlagProvider } from './context/FeatureFlagContext';
 import AuthModal from './components/auth/AuthModal';
 import Spinner from './components/ui/Spinner';
 import AskAIButton from './components/askai/AskAIButton';
@@ -16,6 +17,9 @@ const LeaderboardPage = lazy(() => import('./pages/LeaderboardPage'));
 const SavedKnowledgePage = lazy(() => import('./pages/SavedKnowledgePage'));
 const ExplorePage = lazy(() => import('./pages/ExplorePage'));
 const BatchPortalPage = lazy(() => import('./pages/BatchPortalPage'));
+const SupportIndexPage = lazy(() => import('./pages/SupportIndexPage'));
+const NewSupportRequestPage = lazy(() => import('./pages/NewSupportRequestPage'));
+const SupportTicketPage = lazy(() => import('./pages/SupportTicketPage'));
 
 // Admin pages
 const AdminLogin = lazy(() => import('./admin/pages/AdminLogin'));
@@ -34,6 +38,11 @@ const FaqReview = lazy(() => import('./admin/pages/FaqReview'));
 const AdminAutoAnswerQueue = lazy(() => import('./admin/pages/AdminAutoAnswerQueue'));
 const AdminFAQAudit = lazy(() => import('./admin/pages/AdminFAQAudit'));
 const AdminBatches = lazy(() => import('./admin/pages/AdminBatches'));
+const AdminSupportInbox = lazy(() => import('./admin/pages/AdminSupportInbox'));
+const AdminSupportTicket = lazy(() => import('./admin/pages/AdminSupportTicket'));
+const AdminSupportGuidance = lazy(() => import('./admin/pages/AdminSupportGuidance'));
+const AdminSupportAnalytics = lazy(() => import('./admin/pages/AdminSupportAnalytics'));
+const AdminFeatures = lazy(() => import('./admin/pages/AdminFeatures'));
 const AdminLayout = lazy(() => import('./admin/components/layout/AdminLayout'));
 
 interface AccountRouteProps {
@@ -109,6 +118,11 @@ function AppRoutes() {
         <Route path="/leaderboard" element={<LeaderboardPage />} />
         <Route path="/saved" element={<SavedKnowledgePage />} />
 
+        {/* Session Support (experimental — gated by feature flag at page level) */}
+        <Route path="/support" element={<SupportIndexPage />} />
+        <Route path="/support/new" element={<NewSupportRequestPage />} />
+        <Route path="/support/:id" element={<SupportTicketPage />} />
+
         {/* Member-only: a user's own settings */}
         <Route
           path="/account"
@@ -136,6 +150,15 @@ function AppRoutes() {
         <Route path="/admin/auto-answer" element={<AdminRoute><AdminLayout><AdminAutoAnswerQueue /></AdminLayout></AdminRoute>} />
         <Route path="/admin/faq-audit" element={<AdminRoute><AdminLayout><AdminFAQAudit /></AdminLayout></AdminRoute>} />
         <Route path="/admin/batches" element={<AdminRoute><AdminLayout><AdminBatches /></AdminLayout></AdminRoute>} />
+
+        {/* Session Support admin (not gated by feature flag) */}
+        <Route path="/admin/support" element={<AdminRoute><AdminLayout><AdminSupportInbox /></AdminLayout></AdminRoute>} />
+        <Route path="/admin/support/analytics" element={<AdminRoute><AdminLayout><AdminSupportAnalytics /></AdminLayout></AdminRoute>} />
+        <Route path="/admin/support/guidance" element={<AdminRoute><AdminLayout><AdminSupportGuidance /></AdminLayout></AdminRoute>} />
+        <Route path="/admin/support/:id" element={<AdminRoute><AdminLayout><AdminSupportTicket /></AdminLayout></AdminRoute>} />
+
+        {/* Feature flag toggles (admin only) */}
+        <Route path="/admin/features" element={<AdminRoute><AdminLayout><AdminFeatures /></AdminLayout></AdminRoute>} />
 
         {/* Catch-all fallback: redirect any unknown URL to home */}
         <Route path="*" element={<Navigate to="/" replace />} />
@@ -225,13 +248,15 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <BatchProvider>
-          <AuthModalHost>
-            <Suspense fallback={<div className="min-h-screen bg-bg flex items-center justify-center"><Spinner size="md" /></div>}>
-              <AppRoutes />
-            </Suspense>
-          </AuthModalHost>
-        </BatchProvider>
+        <FeatureFlagProvider>
+          <BatchProvider>
+            <AuthModalHost>
+              <Suspense fallback={<div className="min-h-screen bg-bg flex items-center justify-center"><Spinner size="md" /></div>}>
+                <AppRoutes />
+              </Suspense>
+            </AuthModalHost>
+          </BatchProvider>
+        </FeatureFlagProvider>
       </AuthProvider>
     </BrowserRouter>
   );

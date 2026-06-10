@@ -24,6 +24,8 @@ import askAiRoutes from './routes/askAi.js';
 import uploadRoutes from './routes/upload.js';
 import publicFaqRoutes from './routes/publicFaq.js';
 import batchRoutes from './routes/batch.js';
+import supportRoutes from './routes/support.js';
+import featureFlagRoutes from './routes/featureFlag.js';
 import { ingestFrontendLog } from './utils/fileLogger.js';
 import { logger } from './utils/logger.js';
 import { requestLogger } from './utils/requestLogger.js';
@@ -164,6 +166,8 @@ app.use('/api/ask-ai', askAiRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/public', publicFaqRoutes);
 app.use('/api/batches', batchRoutes);
+app.use('/api/support', supportRoutes);
+app.use('/api/feature-flags', featureFlagRoutes);
 
 // 6. Health Check Endpoint
 // Useful for deployment platforms (like Vercel/AWS) to verify the server is alive

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { useAuthModal, useAuthGate } from '../../context/AuthModalContext';
+import { useFeatureFlag } from '../../context/FeatureFlagContext';
 import { buildTransformedUrl } from '../../hooks/useCloudinaryUpload';
 import NotificationBell from '../../components/ui/NotificationBell';
 import ThemeToggle from '../../components/ui/ThemeToggle';
@@ -33,6 +34,11 @@ export default function Navbar() {
   const [profileOpen, setProfileOpen] = useState(false);
   const profileRef = useRef<HTMLDivElement>(null);
   const gate = useAuthGate();
+  // Support link is only rendered when the experimental feature is on.
+  const supportOn = useFeatureFlag('sessionSupport');
+  const allNavItems = supportOn
+    ? [...navItems, { label: 'Support', to: '/support' }]
+    : navItems;
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 12);
@@ -98,7 +104,7 @@ export default function Navbar() {
 
         {/* Center Pill Group (Desktop) */}
         <div className="hidden lg:flex items-center gap-1.5 px-1.5 py-[5px] rounded-full border-[1.5px] border-border bg-card/50 backdrop-blur-[12px] absolute left-1/2 -translate-x-1/2">
-          {navItems.map(({ label, to }) => (
+          {allNavItems.map(({ label, to }) => (
             <NavLink
               key={to}
               to={to}
@@ -259,7 +265,7 @@ export default function Navbar() {
         }}
       >
         <div className="px-6 py-4 flex flex-col gap-1">
-          {navItems.map(({ label, to }) => (
+          {allNavItems.map(({ label, to }) => (
             <NavLink
               key={to}
               to={to}
