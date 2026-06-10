@@ -26,6 +26,7 @@ import publicFaqRoutes from './routes/publicFaq.js';
 import batchRoutes from './routes/batch.js';
 import supportRoutes from './routes/support.js';
 import featureFlagRoutes from './routes/featureFlag.js';
+import { adminRouter as appSettingsAdminRouter, publicRouter as appSettingsPublicRouter } from './routes/appSettings.js';
 import { ingestFrontendLog } from './utils/http/fileLogger.js';
 import { logger } from './utils/http/logger.js';
 import { requestLogger } from './utils/http/requestLogger.js';
@@ -168,6 +169,12 @@ app.use('/api/public', publicFaqRoutes);
 app.use('/api/batches', batchRoutes);
 app.use('/api/support', supportRoutes);
 app.use('/api/feature-flags', featureFlagRoutes);
+
+// v1.65 — Global app settings (Golden Ticket cooldown, penalty
+// multiplier). Two routers: admin-only at /api/admin/settings and
+// public-safe subset at /api/public/settings.
+app.use('/api/admin/settings',  appSettingsAdminRouter);
+app.use('/api/public/settings', appSettingsPublicRouter);
 
 // 6. Health Check Endpoint
 // Useful for deployment platforms (like Vercel/AWS) to verify the server is alive

@@ -95,12 +95,27 @@ export async function getTroubleshootSteps(req: Request, res: Response): Promise
 /**
  * POST /api/support/requests
  * Submit a new request. Gated by flag.
+ *
+ * v1.65 — Golden Ticket cooldowns. A user who had a Golden ticket
+ * rejected within the last `lastGoldenRejectionEndsAt` window cannot
+ * create a NEW Golden ticket (regular non-Golden support tickets are
+ * not affected). The cooldown is stamped on the user by the admin
+ * rejection flow in supportFollowUpController.ts (status='Rejected'
+ * on a Golden ticket). Non-Golden creation is always allowed — the
+ * base support flow is unchanged.
  */
 export async function createSupportRequest(req: Request, res: Response): Promise<void> {
   if (!(await requireFeatureOn(req, res))) return;
   const userId = getAuthedUserId(req);
   if (!userId) { res.status(401).json({ message: 'Authentication required.' }); return; }
 
+  // v1.65 — Golden rejection cooldown gate. Cheap, one indexed read,
+  // no side effects. Only fires for Golden conversion attempts (the
+  // client passes isGolden=true to opt in). For non-Golden support
+  // tickets the cooldown is invisible to the user. The cooldown
+  // duration is configurable from Admin → Settings
+  // (goldenCooldownHours, default 48). A 0-hour cooldown disables
+  // the gate entirely.
   const body = (req.body ?? {}) as {
     issueType?: string;
     title?: string;
@@ -109,7 +124,31 @@ export async function createSupportRequest(req: Request, res: Response): Promise
     documents?: { name?: string; url?: string; type?: string }[];
     guidanceShownAt?: string;
     contextFields?: Record<string, unknown>;
+    isGolden?: boolean;        // v1.65 — opt-in to a Golden ticket at submit time
+    spCost?: number;           // v1.65 — SP to invest (1..100 by default)
   };
+  const isGoldenRequested = body.isGolden === true;
+  const spCostRequested = Math.max(0, Math.trunc(Number(body.spCost) || 0));
+  if (isGoldenRequested) {
+    const { readSetting } = await import('../models/AppSetting.js');
+    const cooldownHours = await readSetting('goldenCooldownHours', 48);
+    if (cooldownHours > 0) {
+      const { default: User } = await import('../models/User.js');
+      const requester = await User.findById(userId).select('lastGoldenRejectionAt').lean();
+      const lastRej = requester?.lastGoldenRejectionAt;
+      if (lastRej) {
+        const endsAt = new Date(lastRej).getTime() + cooldownHours * 60 * 60 * 1000;
+        if (endsAt > Date.now()) {
+          res.status(429).json({
+            message: `You are in a Golden Ticket cooldown. Try again after ${new Date(endsAt).toISOString()}.`,
+            cooldownUntil: new Date(endsAt).toISOString(),
+            cooldownHours,
+          });
+          return;
+        }
+      }
+    }
+  }
 
   const rawIssueType = String(body.issueType || '').trim();
   if (!(rawIssueType in ISSUE_CONFIGS)) {
@@ -184,6 +223,28 @@ export async function createSupportRequest(req: Request, res: Response): Promise
       return;
     }
 
+    // v1.65 — User-driven Golden Ticket submission. If the client
+    // passed isGolden=true with spCost>0, debit the SP from the
+    // requester's wallet BEFORE creating the request. The admin-
+    // conversion flow (POST /api/support/requests/:id/convert-to-golden)
+    // does the same debiting and remains available for power users.
+    if (isGoldenRequested && spCostRequested > 0) {
+      const { spendSpurtiPoints } = await import('../services/promotionService.js');
+      try {
+        await spendSpurtiPoints(
+          userId.toString(),
+          spCostRequested,
+          'Golden Ticket submission (user-driven)',
+          // no source ticket id — request is created below
+        );
+      } catch (spErr) {
+        res.status(400).json({
+          message: (spErr as Error).message || 'Insufficient Spurti Points to submit a Golden ticket.',
+        });
+        return;
+      }
+    }
+
     const request = await SupportRequest.create({
       userId,
       userName: requester.name,
@@ -196,13 +257,21 @@ export async function createSupportRequest(req: Request, res: Response): Promise
       status: 'Pending',
       statusHistory: [{
         status: 'Pending',
-        note: 'Request submitted.',
+        note: isGoldenRequested
+          ? `Request submitted as Golden Ticket (${spCostRequested} SP invested).`
+          : 'Request submitted.',
         updatedBy: userId,
         updatedByName: requester.name,
         timestamp: new Date(),
       }],
       guidanceShownAt,
       contextFields,
+      // v1.65 — Golden fields. Set at create time when the user opts in.
+      isGolden: isGoldenRequested,
+      spCost: isGoldenRequested ? spCostRequested : 0,
+      goldenConvertedAt: isGoldenRequested ? new Date() : null,
+      goldenConvertedBy: isGoldenRequested ? userId : null,
+      goldenConvertedByName: isGoldenRequested ? requester.name : '',
     });
 
     // Attach the documents (if any) as the first follow-up, so the
@@ -255,7 +324,7 @@ export async function listSupportRequests(req: Request, res: Response): Promise<
   const isAdmin = getAuthedUserRole(req) === 'admin' || getAuthedUserRole(req) === 'moderator';
 
   try {
-    const { status, issueType, q, userName, email, from, to } = req.query as Record<string, string | undefined>;
+    const { status, issueType, q, userName, email, from, to, isGolden } = req.query as Record<string, string | undefined>;
     const filter: Record<string, unknown> = isAdmin ? {} : { userId };
     const page = Math.max(1, parseInt(String(req.query.page ?? '1')) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit ?? (isAdmin ? '25' : '20'))) || (isAdmin ? 25 : 20)));
@@ -266,6 +335,16 @@ export async function listSupportRequests(req: Request, res: Response): Promise<
     }
     if (issueType && issueType in ISSUE_CONFIGS) {
       filter.issueType = issueType;
+    }
+    // v1.65 — Golden Ticket inbox filter. Admin-only by design; a
+    // student querying their own list will never see another user's
+    // tickets anyway because the `userId` filter is already in
+    // place, and the compound index `{ userId, isGolden, createdAt }`
+    // keeps this fast. Accepts 'true' / 'false' / '1' / '0'.
+    if (isAdmin && (isGolden === 'true' || isGolden === '1')) {
+      filter.isGolden = true;
+    } else if (isAdmin && (isGolden === 'false' || isGolden === '0')) {
+      filter.isGolden = false;
     }
     if (isAdmin && q) {
       const regex = new RegExp(escapeRegex(q).slice(0, 120), 'i');
@@ -395,5 +474,116 @@ export async function getSupportRequest(req: Request, res: Response): Promise<vo
   } catch (err) {
     logger.error(`[support] getSupportRequest failed: ${(err as Error).message}`);
     res.status(500).json({ message: 'Failed to load support request.' });
+  }
+}
+
+// ─── Self-delete (student removes their own ticket) ─────────────────────────
+//
+// v1.65 — Golden Ticket spec asks for a self-delete flow with a
+// cooldown. Rules:
+//   1. The requester may only delete their OWN ticket (admins still
+//      use the existing admin moderation flow).
+//   2. The ticket must still be in a pre-acknowledged state
+//      ('Pending' or 'open'). Once the admin has moved it to 'In
+//      Review', 'Resolved', 'Rejected', or 'closed', self-delete is
+//      refused — the work has begun and the audit trail must stay.
+//   3. The ticket must be <= 10 minutes old. After that window the
+//      student must contact support to remove it. Prevents the
+//      "submit → sit on it → delete once you regret it" abuse path.
+//   4. If the ticket is Golden, any SP already debited is refunded
+//      through the existing `refundSpurtiPoints` helper.
+
+const SELF_DELETE_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
+
+/**
+ * DELETE /api/support/requests/:id
+ * Student self-deletes their own ticket. Cooldowns + state guards
+ * are applied. Admin can still use any other path to remove a ticket
+ * — this endpoint is student-only.
+ */
+export async function selfDeleteSupportRequest(req: Request, res: Response): Promise<void> {
+  if (!(await requireFeatureOn(req, res))) return;
+  const userId = getAuthedUserId(req);
+  if (!userId) { res.status(401).json({ message: 'Authentication required.' }); return; }
+
+  const id = asStringParam(req.params.id);
+  if (!id || !Types.ObjectId.isValid(id)) {
+    res.status(400).json({ message: 'Invalid request id.' });
+    return;
+  }
+
+  try {
+    const request = await SupportRequest.findById(id);
+    if (!request) {
+      res.status(404).json({ message: 'Support request not found.' });
+      return;
+    }
+    if (request.userId.toString() !== userId.toString()) {
+      // Don't leak existence.
+      res.status(404).json({ message: 'Support request not found.' });
+      return;
+    }
+
+    // State guard: pre-acknowledged only.
+    if (request.status !== 'Pending' && request.status !== 'open') {
+      res.status(409).json({
+        message: `Cannot self-delete a ticket in status '${request.status}'. Contact support if you need this ticket removed.`,
+      });
+      return;
+    }
+
+    // Cooldown: 10 minutes from creation.
+    const ageMs = Date.now() - new Date(request.createdAt).getTime();
+    if (ageMs > SELF_DELETE_WINDOW_MS) {
+      res.status(409).json({
+        message: `Self-delete window has expired (tickets are self-deletable for ${SELF_DELETE_WINDOW_MS / 60000} minutes after creation). Contact support to remove the ticket.`,
+      });
+      return;
+    }
+
+    // Refund any SP that was debited when the ticket was converted to
+    // Golden. The helper throws on failure (e.g. user already gone)
+    // — log and continue with the delete so the ticket state stays
+    // consistent; admin can re-credit via /award-sp if needed.
+    if (request.isGolden && request.spCost > 0) {
+      try {
+        const { refundSpurtiPoints } = await import('../services/promotionService.js');
+        await refundSpurtiPoints(
+          request.userId.toString(),
+          request.spCost,
+          'Self-delete of Golden ticket; SP refund',
+          request._id,
+        );
+      } catch (refundErr) {
+        logger.warn(`[support] self-delete refund failed: ${(refundErr as Error).message}`);
+      }
+    }
+
+    await SupportRequest.deleteOne({ _id: request._id });
+
+    // Notify admins so the audit trail is complete (e.g. a flood of
+    // self-deletes looks like abuse on the admin analytics page).
+    try {
+      const { fanOutToAdmins } = await import('./supportCore.js');
+      await fanOutToAdmins({
+        title: 'Support request self-deleted',
+        message: `A user self-deleted their support request (${request.issueLabel}).`,
+        link: '/admin/support',
+        metadata: {
+          supportRequestId: request._id.toString(),
+          issueType: request.issueType,
+          status: 'self_deleted',
+          isGolden: request.isGolden,
+          spCost: request.spCost,
+        },
+      });
+    } catch (notifyErr) {
+      logger.warn(`[support] self-delete admin notify failed: ${(notifyErr as Error).message}`);
+    }
+
+    res.json({ deleted: true, refundedSp: request.isGolden ? request.spCost : 0 });
+  } catch (err) {
+    logger.error(`[support] selfDeleteSupportRequest failed: ${(err as Error).message}`);
+    res.status(500).json({ message: 'Failed to self-delete support request.' });
   }
 }

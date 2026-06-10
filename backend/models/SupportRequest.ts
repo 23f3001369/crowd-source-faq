@@ -3,7 +3,13 @@ import mongoose, { Document, Schema as MongooseSchema, Types } from 'mongoose';
 // ─── Enums ───────────────────────────────────────────────────────────────────
 
 export type SupportIssueType = 'internet' | 'camera' | 'microphone' | 'device' | 'power' | 'other';
-export type SupportStatus = 'Pending' | 'In Review' | 'Resolved' | 'Rejected';
+// ── 5-state lifecycle (additive, v1.65 — Golden Ticket extension) ──
+// Pre-v1.65 states ('Pending' | 'In Review' | 'Resolved' | 'Rejected')
+// remain valid; existing tickets in those states are unchanged. The
+// two new states are only written by admin transitions / the
+// convert-to-golden flow. New tickets still default to 'Pending' so
+// the existing admin inbox filter (status='Pending') keeps matching.
+export type SupportStatus = 'Pending' | 'In Review' | 'Resolved' | 'Rejected' | 'open' | 'closed';
 export type SupportSenderRole = 'admin' | 'student';
 
 // Default issue-type display labels + 4-step checklists. These are
@@ -156,6 +162,22 @@ export interface ISupportRequest extends Document {
   // archived after the ticket was submitted.
   contextFields: { key: string; label: string; value: string | number | boolean | null }[];
 
+  // ── Golden Ticket (additive, v1.65) ──────────────────────────────────
+  // `isGolden: false` is the safe default — every existing ticket reads
+  // as non-Golden until an admin explicitly converts it via
+  // POST /api/admin/support/requests/:id/convert-to-golden.
+  isGolden: boolean;
+  // SP cost paid (or to be paid) for this Golden ticket. 0 for non-golden.
+  spCost: number;
+  // Provenance for the conversion: when did an admin promote this, and who.
+  goldenConvertedAt: Date | null;
+  goldenConvertedBy: Types.ObjectId | null;
+  goldenConvertedByName: string;
+  // If the Golden ticket was rejected, surface the reason in the user view
+  // and stamp a cooldown so the same user can't immediately retry.
+  goldenRejectionReason: string;
+  goldenRejectionEndsAt: Date | null;
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -194,7 +216,10 @@ const internalNoteSubSchema = new MongooseSchema<ISupportInternalNote>(
 
 const statusHistorySubSchema = new MongooseSchema<ISupportStatusHistoryEntry>(
   {
-    status:        { type: String, enum: ['Pending', 'In Review', 'Resolved', 'Rejected'] as SupportStatus[], required: true },
+    // v1.65: enum extended with 'open' and 'closed' (Golden Ticket lifecycle).
+    // Existing 'Pending' | 'In Review' | 'Resolved' | 'Rejected' continue
+    // to write to history — no migration on existing entries needed.
+    status:        { type: String, enum: ['Pending', 'In Review', 'Resolved', 'Rejected', 'open', 'closed'] as SupportStatus[], required: true },
     note:          { type: String, default: '', maxlength: 2000 },
     updatedBy:     { type: MongooseSchema.Types.ObjectId, ref: 'User', required: true },
     updatedByName: { type: String, required: true, maxlength: 100 },
@@ -222,8 +247,12 @@ const supportRequestSchema = new MongooseSchema<ISupportRequest>(
     attemptedSteps: { type: [String], default: [] },
 
     status: {
+      // v1.65: enum extended with 'open' and 'closed' (Golden Ticket
+      // lifecycle). Existing tickets and the existing 'Pending' default
+      // are unchanged. New admin transitions to 'open' / 'closed' only
+      // happen via the Golden Ticket / status-update endpoints.
       type: String,
-      enum: ['Pending', 'In Review', 'Resolved', 'Rejected'] as SupportStatus[],
+      enum: ['Pending', 'In Review', 'Resolved', 'Rejected', 'open', 'closed'] as SupportStatus[],
       default: 'Pending',
       index: true,
     },
@@ -252,6 +281,22 @@ const supportRequestSchema = new MongooseSchema<ISupportRequest>(
       }],
       default: [],
     },
+
+    // ── Golden Ticket fields (additive, v1.65) ────────────────────────────
+    // All default to safe, non-Golden values so existing documents in the
+    // `yaksha_faq_session_support` collection read as non-Golden without
+    // a migration script. Mongoose only applies `default` on insert, so
+    // legacy documents missing these fields return `undefined` from
+    // `.toObject()` — admin views and the public inbox MUST treat
+    // `undefined` and `false` identically. Helpers in supportCore.ts
+    // (`isGoldenTicket`, `goldenRejectionActive`) centralise that.
+    isGolden:               { type: Boolean, default: false },
+    spCost:                 { type: Number,  default: 0, min: 0 },
+    goldenConvertedAt:      { type: Date,    default: null },
+    goldenConvertedBy:      { type: MongooseSchema.Types.ObjectId, ref: 'User', default: null },
+    goldenConvertedByName:  { type: String,  default: '', maxlength: 100 },
+    goldenRejectionReason:  { type: String,  default: '', maxlength: 2000 },
+    goldenRejectionEndsAt:  { type: Date,    default: null },
   },
   { timestamps: true }
 );
@@ -270,6 +315,13 @@ supportRequestSchema.index({ status: 1, createdAt: 1 });
 // Status-update race guard (used by controller to prevent two
 // simultaneous transitions)
 supportRequestSchema.index({ _id: 1, status: 1 });
+
+// v1.65 — Golden Ticket admin inbox: filter Golden vs non-Golden + sort
+// golden first (newest). Compound index keeps the admin "Golden" filter
+// fast without scanning non-Golden docs.
+supportRequestSchema.index({ isGolden: 1, status: 1, createdAt: -1 });
+// Cooldown / analytics: count a user's Golden tickets in a date window.
+supportRequestSchema.index({ userId: 1, isGolden: 1, createdAt: -1 });
 
 export default mongoose.model<ISupportRequest>(
   'SupportRequest',

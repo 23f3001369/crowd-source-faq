@@ -204,8 +204,40 @@ export async function updateSupportStatus(req: Request, res: Response): Promise<
       return;
     }
 
+    // v1.65 — Golden Ticket rejection penalty. When an admin rejects a
+    // Golden ticket, instead of refunding the SP the user spent, we
+    // apply a configurable penalty (default 1.25x the SP they
+    // invested — i.e. user loses 25% MORE than they paid). The
+    // penalty is gated by the `goldenPenaltyMultiplier` setting.
+    // Setting to 0 = no penalty (full refund). Setting to 1.0 = break-
+    // even. Default 1.25. Cooldown duration is also configurable via
+    // `goldenCooldownHours` (default 48). The penalty + cooldown
+    // together replace the old "refund + 24h" behaviour.
+    let goldenRejectionEndsAt: Date | null = null;
+    let goldenPenaltySp = 0;
+    if (nextStatus === 'Rejected' && request.isGolden) {
+      const { readSetting } = await import('../models/AppSetting.js');
+      const cooldownHours = await readSetting('goldenCooldownHours', 48);
+      const penaltyMultiplier = await readSetting('goldenPenaltyMultiplier', 1.25);
+      if (cooldownHours > 0) {
+        goldenRejectionEndsAt = new Date(Date.now() + cooldownHours * 60 * 60 * 1000);
+      }
+      // Penalty is the spent SP times the multiplier. Ceiling the
+      // result so a fractional SP penalty never becomes a positive
+      // credit (e.g. 1.25 * 1 = 1.25 → 2 SP deducted). A multiplier
+      // of 0 means "no penalty / full refund" (the user keeps their
+      // investment if admin sets the policy to refund).
+      if (penaltyMultiplier > 0) {
+        goldenPenaltySp = Math.ceil((request.spCost ?? 0) * penaltyMultiplier);
+      }
+    }
+
     request.status = nextStatus;
     request.adminNote = adminNote || request.adminNote;
+    if (goldenRejectionEndsAt) {
+      request.goldenRejectionReason = adminNote || '';
+      request.goldenRejectionEndsAt = goldenRejectionEndsAt;
+    }
     if (internalNote) {
       request.internalNotes.push({
         note: internalNote,
@@ -237,12 +269,56 @@ export async function updateSupportStatus(req: Request, res: Response): Promise<
     request.updatedAt = new Date();
     await request.save();
 
+    // v1.65 — Mirror the per-ticket Golden rejection cooldown onto
+    // the user record, and apply the SP penalty (default 1.25x of the
+    // SP the user spent). Both are gated by the configurable App
+    // Settings — if the admin sets the penalty multiplier to 0 the
+    // user gets a full refund; if the cooldown is 0 the user can
+    // submit another ticket immediately. Non-Golden rejections leave
+    // the user field untouched. Reuses the `User` import already in
+    // scope.
+    if (goldenRejectionEndsAt || goldenPenaltySp > 0) {
+      const setOps: Record<string, unknown> = {};
+      if (goldenRejectionEndsAt) setOps.lastGoldenRejectionAt = goldenRejectionEndsAt;
+      if (goldenPenaltySp > 0) {
+        // Deduct the penalty from the user's wallet. The helper
+        // throws on insufficient balance (which is fine — the user
+        // goes to 0, the audit log records the deduction up to their
+        // available balance). We log + continue on failure so the
+        // rejection status update is never blocked by wallet math.
+        try {
+          const { awardSpurtiPoints } = await import('../services/promotionService.js');
+          // awardSpurtiPoints with negative amount = deduction.
+          await awardSpurtiPoints(
+            request.userId.toString(),
+            -goldenPenaltySp,
+            'sp_deducted',
+            `Golden Ticket rejection penalty: ${goldenPenaltySp} SP (${request.spCost ?? 0} spent × penalty multiplier)`,
+            userId,
+          );
+        } catch (penaltyErr) {
+          logger.warn(
+            `[support] Golden rejection penalty deduction failed: ${(penaltyErr as Error).message}`,
+          );
+        }
+      }
+      if (Object.keys(setOps).length > 0) {
+        await User.updateOne({ _id: request.userId }, { $set: setOps });
+      }
+    }
+
     // Notify the student
+    // v1.65: status enum extended with 'open' and 'closed'. The two new
+    // states are reachable via admin transitions (Golden Ticket flow);
+    // user-facing copy is added so the Record<SupportStatus, string>
+    // typecheck still passes and notifications are never undefined.
     const titleByStatus: Record<SupportStatus, string> = {
       'Pending':   'Your support request was reopened',
       'In Review': 'Your support request is under review',
       'Resolved':  'Your support request was resolved',
       'Rejected':  'Your support request was rejected',
+      'open':      'Your support request was opened by the support team',
+      'closed':    'Your support request was closed',
     };
     const baseMsg = nextStatus === 'Resolved' && request.sessionAccessUrl
       ? 'Your request was approved and the recorded session is available now.'

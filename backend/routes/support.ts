@@ -5,11 +5,9 @@ import {
   createSupportRequest,
   listSupportRequests,
   getSupportRequest,
+  selfDeleteSupportRequest,
 } from '../controllers/supportRequestsController.js';
-import {
-  addSupportFollowUp,
-  updateSupportStatus,
-} from '../controllers/supportFollowUpController.js';
+import { addSupportFollowUp, updateSupportStatus } from '../controllers/supportFollowUpController.js';
 import { listGuidance, updateGuidance } from '../controllers/supportGuidanceController.js';
 import { getSupportAnalytics } from '../controllers/supportAnalyticsController.js';
 import {
@@ -22,6 +20,13 @@ import {
   updateField,
   archiveField,
 } from '../controllers/supportCategoriesController.js';
+import {
+  convertToGolden,
+  unconverGolden,
+  awardSpurtiPointsAdmin,
+  getMySpurtiPoints,
+  getGoldenQueue,
+} from '../controllers/supportGoldenController.js';
 import { createIdentityLimiter } from '../utils/auth/rateLimit.js';
 
 const router = Router();
@@ -68,6 +73,29 @@ router.post('/requests/:id/follow-ups',     replyLimiter,   addSupportFollowUp);
 
 // Status update (gated by flag, admin only).
 router.patch('/requests/:id/status', authorize('admin', 'moderator'), updateSupportStatus);
+
+// v1.65 — Self-delete: student removes their own ticket (gated by
+// flag). 10-minute cooldown + state guard are enforced inside the
+// controller. Admin can still moderate via the PATCH /status route.
+router.delete('/requests/:id', selfDeleteSupportRequest);
+
+// v1.65 — Public Escalation Queue for the new Golden Ticket page.
+// Any authed user can read recent Golden tickets; non-admins see
+// the requester as 'ANONYMOUS'.
+router.get('/golden/queue',                  getGoldenQueue);
+
+// ─── Golden Ticket (v1.65, additive) ─────────────────────────────────────
+// Admin actions: convert existing ticket to Golden (debits SP if a
+// cost is provided), roll back a conversion (refunds SP), award SP
+// to a user. The convert / unconver routes reuse the same auth gate
+// as the status update — admin or moderator only.
+router.post('/requests/:id/convert-to-golden',   authorize('admin', 'moderator'), convertToGolden);
+router.post('/requests/:id/unconvert-golden',   authorize('admin', 'moderator'), unconverGolden);
+router.post('/users/:userId/award-sp',          authorize('admin', 'moderator'), awardSpurtiPointsAdmin);
+
+// Self-service: any authed user can read their own SP balance (used
+// by the navbar chip / profile card).
+router.get('/me/sp',                             getMySpurtiPoints);
 
 // Category CRUD (admin only — not gated by the feature flag, admins
 // should be able to inspect / edit categories even when the feature

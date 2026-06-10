@@ -24,7 +24,49 @@ import { isFeatureEnabled } from './featureFlagController.js';
 
 // ─── Valid statuses (mirrors the model enum) ────────────────────────────────
 
-export const VALID_STATUSES: SupportStatus[] = ['Pending', 'In Review', 'Resolved', 'Rejected'];
+// v1.65: extended with 'open' and 'closed' (Golden Ticket lifecycle).
+// Controllers filter with this list before applying admin status updates;
+// existing four values are unchanged so pre-v1.65 admin inbox filters
+// (e.g. status='Pending') keep matching. The two new values are only
+// written by the convert-to-golden / Golden status endpoints.
+export const VALID_STATUSES: SupportStatus[] = [
+  'Pending',
+  'In Review',
+  'Resolved',
+  'Rejected',
+  'open',
+  'closed',
+];
+
+// ─── Golden Ticket helpers (v1.65, additive) ───────────────────────────────
+
+/**
+ * Coerce any value (incl. `undefined` from legacy docs missing the
+ * `isGolden` field) to a stable boolean. The admin inbox and the user
+ * "my tickets" list both rely on this so we don't accidentally treat
+ * missing-field as "not Golden" in one view and "Golden" in another.
+ */
+export function isGoldenTicket(
+  ticket: { isGolden?: boolean } | null | undefined
+): boolean {
+  return Boolean(ticket?.isGolden);
+}
+
+/**
+ * `true` while a Golden ticket's rejection cooldown is still in effect.
+ * Cooldown is stamped by the admin rejection flow (`goldenRejectionEndsAt`)
+ * and lifted naturally by time. NULL endsAt = no cooldown.
+ */
+export function goldenRejectionActive(
+  ticket: { goldenRejectionEndsAt?: Date | null } | null | undefined,
+  now: Date = new Date()
+): boolean {
+  const endsAt = ticket?.goldenRejectionEndsAt;
+  if (!endsAt) return false;
+  const t = endsAt instanceof Date ? endsAt : new Date(endsAt);
+  if (isNaN(t.getTime())) return false;
+  return t.getTime() > now.getTime();
+}
 
 // ─── Auth helpers ──────────────────────────────────────────────────────────
 

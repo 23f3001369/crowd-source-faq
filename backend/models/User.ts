@@ -22,7 +22,17 @@ export type ReputationAction =
   | 'faq_converted'        // question author: question → FAQ (+15)
   | 'faq_answer_used'      // answer author: answer used in FAQ (+25)
   | 'admin_approval_bonus' // question author: admin approved (+10)
-  | 'spam_confirmed';      // user: spam report confirmed (-20)
+  | 'spam_confirmed'       // user: spam report confirmed (-20)
+  // v1.65 — Golden Ticket / Spurti Points (SP) ledger entries.
+  // SP is a separate currency from `points`; these actions do NOT
+  // touch the tier system. The Golden controller routes through
+  // promotionService.ts (which writes the SP delta) and tags the
+  // log row with one of these action values for audit / reversal.
+  | 'sp_awarded'           // admin awarded SP (e.g. helpful contributor bonus)
+  | 'sp_spent'             // user spent SP to create / convert a Golden ticket
+  | 'sp_refunded'          // SP returned (golden ticket rolled back by admin)
+  | 'sp_deducted'          // SP removed as a penalty (admin rejected a Golden ticket)
+  | 'golden_converted';    // admin converted an existing ticket to Golden (audit trail)
 
 // ─── Badge subdocument ────────────────────────────────────────────────────────
 
@@ -74,6 +84,20 @@ export interface IUser extends Document {
   // Denormalized counts for leaderboard trust score (updated on write, not computed per-request)
   acceptedAnswers: number;
   faqContributions: number;
+  // ── Spurti Points (SP) — Golden Ticket currency (additive, v1.65) ──
+  // `points` above is reputation for the existing tier system
+  // (newcomer / contributor / helper / expert / champion / knowledge_master).
+  // `sp` is a separate, spendable currency used only by the Golden
+  // Ticket feature. Default 0; never auto-credited, only changed via
+  // `awardSpurtiPoints()` / `spendSpurtiPoints()` helpers in
+  // promotionService.ts. The two fields never feed each other.
+  sp: number;
+  // Cooldown provenance for the Golden Ticket creation / self-delete
+  // gates. NULL means "no active cooldown". The Golden controller reads
+  // these in `supportGoldenController.ts` before allowing a conversion
+  // or self-delete.
+  lastGoldenTicketAt: Date | null;
+  lastGoldenRejectionAt: Date | null;
   // Methods
   comparePassword(candidatePassword: string): Promise<boolean>;
 }
@@ -164,6 +188,15 @@ const userSchema = new MongooseSchema<IUser>(
     // Denormalized counts for leaderboard trust score (updated on write, not computed per-request)
     acceptedAnswers: { type: Number, default: 0 },
     faqContributions: { type: Number, default: 0 },
+
+    // ── Spurti Points (SP) + Golden Ticket cooldowns (v1.65, additive) ──
+    // sp is independent of `points` (which drives the tier system). It
+    // is a spendable currency awarded by admins / earned through
+    // specific actions, and only consumed by the Golden Ticket flow.
+    sp: { type: Number, default: 0, min: 0 },
+    // Cooldown provenance for the Golden flow. NULL = no active cooldown.
+    lastGoldenTicketAt:     { type: Date, default: null },
+    lastGoldenRejectionAt:  { type: Date, default: null },
   },
   { timestamps: true }
 );
@@ -190,5 +223,7 @@ userSchema.index({ reputation: -1 });
 userSchema.index({ tier: 1 });
 userSchema.index({ isBanned: 1 });
 userSchema.index({ isDeleted: 1 });
+// v1.65 — SP leaderboard: sort by sp desc for the "Spurti Points" rank.
+userSchema.index({ sp: -1 });
 
 export default mongoose.model<IUser>('User', userSchema, 'yaksha_faq_users');
