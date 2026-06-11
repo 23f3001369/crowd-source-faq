@@ -123,12 +123,12 @@ export default function Navbar() {
         </NavLink>
 
         {/* Center Pill Group (Desktop) — Vertically centered in the
-            navbar. Hidden on lg, shown on 2xl so it doesn't fight
-            with the right-side controls (ThemeToggle + SP + bell +
-            avatar) for horizontal space. Tighter padding (gap-0.5
-            px-2) + smaller font keeps "Support" and "Golden" from
-            truncating at the 1280–1535px range. */}
-        <div className="hidden 2xl:flex items-center gap-0.5 px-2 py-1 rounded-full border-[1.5px] border-border/60 bg-card/85 backdrop-blur-[20px] shadow-subtle absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 transition-all duration-300 hover:bg-card/95">
+            navbar. Hidden below xl, shown on xl+ so it's available
+            across the 1280–1535px laptop range too. At 2xl+ the
+            Ask Question button joins it on the right. Tighter
+            padding (gap-0.5 px-2) + smaller font keeps "Support"
+            and "Golden" from truncating at the 1280–1535px range. */}
+        <div className="hidden xl:flex items-center gap-0.5 px-2 py-1 rounded-full border-[1.5px] border-border/60 bg-card/85 backdrop-blur-[20px] shadow-subtle absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 transition-all duration-300 hover:bg-card/95">
           {allNavItems.map(({ label, to, xlOnly }) => (
             <NavLink
               key={to}
