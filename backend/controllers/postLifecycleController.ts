@@ -53,16 +53,22 @@ export const resolvePost = async (req: Request, res: Response): Promise<void> =>
       });
       post.lifecycle.status = 'answered';
     }
-    // Clear any pending escalation — answering resolves the issue
-    post.escalationStatus = 'none';
-    post.escalatedAt = null;
-    post.escalationReason = null;
-    post.escalatedBy = null;
-    // Set answerIsExpert flag when a moderator or admin resolves the post
-    if (req.user?.role === 'moderator' || req.user?.role === 'admin' || req.user?.role === 'expert') {
-      post.answerIsExpert = true;
-    }
-    await post.save();
+    // v1.68 — H3 fix: was in-memory mutate + save(). Atomic
+    // findOneAndUpdate with $set replaces the field changes.
+    const expertRoles = ['moderator', 'admin', 'expert'];
+    const isExpertResolver = req.user?.role !== undefined && expertRoles.includes(req.user.role);
+    await CommunityPost.findOneAndUpdate(
+      { _id: post._id },
+      {
+        $set: {
+          escalationStatus: 'none',
+          escalatedAt: null,
+          escalationReason: null,
+          escalatedBy: null,
+          ...(isExpertResolver ? { answerIsExpert: true } : {}),
+        },
+      },
+    );
 
     // Invalidate search cache so resolved answer reflects immediately
     await invalidateCache().catch((err) => {
@@ -191,14 +197,20 @@ export const convertCommunityPostToFAQ = async (req: Request, res: Response): Pr
       createdBy: post.author,
     });
 
-    // Mark the post as resolved
-    post.status = 'answered';
-    post.escalationStatus = 'none';
-    post.escalatedAt = null;
-    post.escalationReason = null;
-    post.escalatedBy = null;
-    post.answerIsExpert = true;
-    await post.save();
+    // v1.68 — H3 fix: atomic $set.
+    await CommunityPost.findOneAndUpdate(
+      { _id: post._id },
+      {
+        $set: {
+          status: 'answered',
+          escalationStatus: 'none',
+          escalatedAt: null,
+          escalationReason: null,
+          escalatedBy: null,
+          answerIsExpert: true,
+        },
+      },
+    );
 
     // Invalidate search cache so the new FAQ appears immediately
     await invalidateCache().catch((err) => {
@@ -234,13 +246,20 @@ export const setPostDNA = async (req: Request, res: Response): Promise<void> => 
       difficulty?: 'Easy' | 'Moderate' | 'Tricky';
     };
 
-    post.dna = {
-      steps: steps ?? post.dna?.steps ?? [],
-      tools: tools ?? post.dna?.tools ?? [],
-      timeToComplete: timeToComplete ?? post.dna?.timeToComplete ?? null,
-      difficulty: difficulty ?? post.dna?.difficulty ?? null,
-    };
-    await post.save();
+    // v1.68 — H3 fix: atomic $set on the dna subdoc.
+    await CommunityPost.findOneAndUpdate(
+      { _id: post._id },
+      {
+        $set: {
+          dna: {
+            steps: steps ?? post.dna?.steps ?? [],
+            tools: tools ?? post.dna?.tools ?? [],
+            timeToComplete: timeToComplete ?? post.dna?.timeToComplete ?? null,
+            difficulty: difficulty ?? post.dna?.difficulty ?? null,
+          },
+        },
+      },
+    );
 
     res.json({ message: 'DNA updated.', dna: post.dna });
   } catch (error) {
@@ -267,8 +286,11 @@ export const setPostTags = async (req: Request, res: Response): Promise<void> =>
     const { tags } = req.body as { tags?: string[] };
     if (!Array.isArray(tags)) { res.status(400).json({ message: 'tags must be an array.' }); return; }
 
-    post.tags = tags.map((t: string) => t.trim().toLowerCase()).filter(Boolean);
-    await post.save();
+    // v1.68 — H3 fix: atomic $set on the tags array.
+    await CommunityPost.findOneAndUpdate(
+      { _id: post._id },
+      { $set: { tags: tags.map((t: string) => t.trim().toLowerCase()).filter(Boolean) } },
+    );
 
     res.json({ message: 'Tags updated.', tags: post.tags });
   } catch (error) {
