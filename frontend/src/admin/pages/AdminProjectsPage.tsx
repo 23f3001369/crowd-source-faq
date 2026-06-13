@@ -20,6 +20,7 @@ interface Project {
   techStack?: string[];
   deliverables?: string[];
   teamSize?: string;
+  capacity: number;
   createdAt: string;
 }
 
@@ -44,7 +45,8 @@ export default function AdminProjectsPage() {
     weeklyCommitment: '',
     techStack: '',
     deliverables: '',
-    teamSize: ''
+    teamSize: '',
+    capacity: 30
   });
 
   const fetchProjects = async () => {
@@ -82,7 +84,8 @@ export default function AdminProjectsPage() {
       weeklyCommitment: '',
       techStack: '',
       deliverables: '',
-      teamSize: ''
+      teamSize: '',
+      capacity: 30
     });
     setIsModalOpen(true);
   };
@@ -103,7 +106,8 @@ export default function AdminProjectsPage() {
       weeklyCommitment: project.weeklyCommitment || '',
       techStack: project.techStack?.join(', ') || '',
       deliverables: project.deliverables?.join('\n') || '',
-      teamSize: project.teamSize || ''
+      teamSize: project.teamSize || '',
+      capacity: project.capacity !== undefined ? project.capacity : 30
     });
     setIsModalOpen(true);
   };
@@ -181,6 +185,7 @@ export default function AdminProjectsPage() {
                 <th className="px-6 py-4">Status</th>
                 <th className="px-6 py-4">Skills</th>
                 <th className="px-6 py-4">Resources</th>
+                <th className="px-6 py-4">Capacity</th>
                 <th className="px-6 py-4 text-right">Actions</th>
               </tr>
             </thead>
@@ -230,6 +235,9 @@ export default function AdminProjectsPage() {
                     ) : (
                       <span className="text-ink-faint">-</span>
                     )}
+                  </td>
+                  <td className="px-6 py-4 text-ink font-medium">
+                    {p.capacity || 30}
                   </td>
                   <td className="px-6 py-4 text-right">
                     <div className="flex items-center justify-end gap-3">
@@ -418,6 +426,18 @@ export default function AdminProjectsPage() {
                         onChange={e => setFormData(prev => ({ ...prev, teamSize: e.target.value }))}
                         className="w-full bg-bg border border-border rounded-lg px-4 py-2.5 text-ink focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
                         placeholder="e.g. 2-4 members"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-ink mb-1.5">Participant Capacity</label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={formData.capacity}
+                        onChange={e => setFormData(prev => ({ ...prev, capacity: parseInt(e.target.value) || 0 }))}
+                        className="w-full bg-bg border border-border rounded-lg px-4 py-2.5 text-ink focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 transition-all"
+                        placeholder="e.g. 30"
                       />
                     </div>
 

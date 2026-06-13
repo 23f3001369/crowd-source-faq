@@ -27,11 +27,11 @@ export default function MyProjectTab() {
         return;
       }
       try {
-        const res = await api.get('/welcome/projects');
-        const activeProject = res.data.find((p: Project) => p.projectName === user.projectAssigned);
-        setProject(activeProject || null);
+        const res = await api.get('/welcome/my-project');
+        setProject(res.data || null);
       } catch (error) {
         console.error('Error fetching project details', error);
+        setProject(null);
       } finally {
         setLoading(false);
       }
@@ -81,7 +81,11 @@ export default function MyProjectTab() {
               </div>
               <div className="bg-bg/50 backdrop-blur-md rounded-xl p-5 border border-border/40">
                 <p className="text-[10px] font-bold text-ink-faint uppercase tracking-wider mb-1">Status</p>
-                <p className="text-lg font-medium text-accent uppercase tracking-wider text-sm mt-1">{project?.status || 'Active'}</p>
+                <p className={`text-lg font-medium uppercase tracking-wider text-sm mt-1 ${
+                  (project?.status || 'active').toLowerCase() === 'active' ? 'text-accent' : 'text-red-500'
+                }`}>
+                  {project?.status || 'Active'}
+                </p>
               </div>
               <div className="bg-bg/50 backdrop-blur-md rounded-xl p-5 border border-border/40 col-span-2 lg:col-span-1">
                 <p className="text-[10px] font-bold text-ink-faint uppercase tracking-wider mb-1">Date Assigned</p>

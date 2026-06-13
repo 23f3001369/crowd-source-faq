@@ -14,7 +14,7 @@ export const createProject = async (req: Request, res: Response): Promise<void> 
   try {
     const { 
       projectName, description, mentorName, mentorEmail, status, resources, skills,
-      problemStatement, whyMatters, outcomes, difficulty, weeklyCommitment, techStack, deliverables, teamSize
+      problemStatement, whyMatters, outcomes, difficulty, weeklyCommitment, techStack, deliverables, teamSize, capacity
     } = req.body;
     
     if (!projectName || !mentorName) {
@@ -37,7 +37,8 @@ export const createProject = async (req: Request, res: Response): Promise<void> 
       weeklyCommitment,
       techStack: techStack || [],
       deliverables: deliverables || [],
-      teamSize
+      teamSize,
+      capacity: capacity !== undefined ? capacity : 30
     });
 
     await newProject.save();
@@ -52,7 +53,7 @@ export const updateProject = async (req: Request, res: Response): Promise<void> 
     const { id } = req.params;
     const { 
       projectName, description, mentorName, mentorEmail, status, resources, skills,
-      problemStatement, whyMatters, outcomes, difficulty, weeklyCommitment, techStack, deliverables, teamSize
+      problemStatement, whyMatters, outcomes, difficulty, weeklyCommitment, techStack, deliverables, teamSize, capacity
     } = req.body;
 
     const project = await Project.findById(id);
@@ -76,6 +77,7 @@ export const updateProject = async (req: Request, res: Response): Promise<void> 
     if (techStack !== undefined) project.techStack = techStack;
     if (deliverables !== undefined) project.deliverables = deliverables;
     if (teamSize !== undefined) project.teamSize = teamSize;
+    if (capacity !== undefined) project.capacity = capacity;
 
     await project.save();
     res.status(200).json(project);

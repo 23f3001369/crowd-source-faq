@@ -5,7 +5,8 @@ import {
   askOrientationQuestion,
   trackWelcomeOnboarding,
   completeOrientation,
-  selectProject
+  selectProject,
+  getMyProject
 } from '../controllers/welcomeController.js';
 import { protect } from '../middleware/auth.js';
 import TimelineStep from '../models/TimelineStep.js';
@@ -15,6 +16,7 @@ const router = express.Router();
 
 router.get('/orientation', getActiveOrientation);
 router.get('/projects', getTimelineProjects);
+router.get('/my-project', protect, getMyProject);
 
 // Requires auth to ask questions so we can track the user
 router.post('/orientation/ask', protect, askOrientationQuestion);

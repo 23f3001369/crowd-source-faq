@@ -22,6 +22,7 @@ export interface IProject extends Document {
   techStack?: string[];
   deliverables?: string[];
   teamSize?: string;
+  capacity: number;
   
   createdAt: Date;
   updatedAt: Date;
@@ -47,7 +48,8 @@ const projectSchema = new MongooseSchema<IProject>(
     weeklyCommitment: { type: String },
     techStack: [{ type: String }],
     deliverables: [{ type: String }],
-    teamSize: { type: String }
+    teamSize: { type: String },
+    capacity: { type: Number, default: 30 }
   },
   { timestamps: true }
 );

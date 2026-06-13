@@ -17,8 +17,22 @@ export const getActiveOrientation = async (req: Request, res: Response): Promise
 // Fetch all active projects for the timeline and selection modal
 export const getTimelineProjects = async (req: Request, res: Response): Promise<void> => {
   try {
-    const projects = await Project.find({ status: 'active' }).populate('mentor').sort({ createdAt: -1 });
-    res.status(200).json(projects);
+    const projects = await Project.find({ status: 'active' }).populate('mentor').sort({ createdAt: -1 }).lean();
+    
+    const User = (await import('../models/User.js')).default;
+    const projectCounts = await User.aggregate([
+      { $match: { projectAssigned: { $exists: true, $ne: '' } } },
+      { $group: { _id: '$projectAssigned', count: { $sum: 1 } } }
+    ]);
+    const countMap = projectCounts.reduce((acc: any, curr: any) => ({ ...acc, [curr._id]: curr.count }), {});
+
+    const projectsWithCounts = projects.map((p: any) => ({
+      ...p,
+      capacity: p.capacity ?? 30,
+      selectedCount: countMap[p.projectName] || 0
+    }));
+
+    res.status(200).json(projectsWithCounts);
   } catch (error) {
     res.status(500).json({ message: 'Error fetching projects', error });
   }
@@ -163,6 +177,12 @@ export const selectProject = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
+    const currentCount = await User.countDocuments({ projectAssigned: projectDoc.projectName });
+    if (currentCount >= projectDoc.capacity) {
+      res.status(400).json({ message: 'This project has reached its maximum capacity.' });
+      return;
+    }
+
     user.projectAssigned = projectDoc.projectName;
     user.mentorAssigned = projectDoc.mentor ? (projectDoc.mentor as any).name : projectDoc.mentorName;
     user.projectSelectionLocked = true;
@@ -182,3 +202,33 @@ export const selectProject = async (req: Request, res: Response): Promise<void> 
   }
 };
 
+export const getMyProject = async (req: Request, res: Response): Promise<void> => {
+  try {
+    // @ts-ignore
+    const userId = req.user?._id;
+    if (!userId) {
+      res.status(401).json({ message: 'Unauthorized' });
+      return;
+    }
+
+    const User = (await import('../models/User.js')).default;
+    const user = await User.findById(userId);
+
+    if (!user || !user.projectAssigned) {
+      res.status(404).json({ message: 'No project assigned' });
+      return;
+    }
+
+    const project = await Project.findOne({ projectName: user.projectAssigned }).populate('mentor').lean();
+    
+    if (!project) {
+      res.status(404).json({ message: 'Project not found' });
+      return;
+    }
+
+    res.status(200).json(project);
+  } catch (error) {
+    console.error('Error fetching my project:', error);
+    res.status(500).json({ message: 'Error fetching my project', error });
+  }
+};

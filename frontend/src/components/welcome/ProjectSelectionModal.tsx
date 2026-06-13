@@ -9,6 +9,8 @@ interface Project {
   status: string;
   resources: string[];
   skills?: string[];
+  capacity?: number;
+  selectedCount?: number;
 }
 
 interface ProjectSelectionModalProps {
@@ -75,6 +77,14 @@ export default function ProjectSelectionModal({ isOpen, project, onClose, onSucc
                    <div className="text-[10px] text-ink-faint uppercase font-bold tracking-wider mb-1">Assigned Mentor</div>
                    <div className="text-md font-medium text-ink">{project.mentorName}</div>
                  </div>
+                 {project.capacity !== undefined && (
+                   <div>
+                     <div className="text-[10px] text-ink-faint uppercase font-bold tracking-wider mb-1">Seat Status</div>
+                     <div className="text-md font-medium text-ink">
+                       {project.selectedCount || 0} / {project.capacity} Seats Filled
+                     </div>
+                   </div>
+                 )}
               </div>
             </div>
 

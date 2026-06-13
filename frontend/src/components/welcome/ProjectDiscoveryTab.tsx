@@ -20,6 +20,8 @@ interface Project {
   techStack?: string[];
   deliverables?: string[];
   teamSize?: string;
+  capacity?: number;
+  selectedCount?: number;
 }
 
 export default function ProjectDiscoveryTab() {
@@ -83,18 +85,42 @@ export default function ProjectDiscoveryTab() {
           exit={{ opacity: 0, scale: 0.95 }}
           className="grid grid-cols-1 xl:grid-cols-2 gap-8"
         >
-          {projects.map((p) => (
+          {projects.map((p) => {
+            const isFull = (p.capacity !== undefined && p.selectedCount !== undefined) && p.selectedCount >= p.capacity;
+            
+            return (
             <motion.div
               key={p.projectName}
-              whileHover={{ y: -4 }}
-              className="bg-card border border-[rgb(var(--border-rgb))]/30 rounded-2xl shadow-sm hover:shadow-lg hover:border-accent/50 cursor-pointer flex flex-col transition-all group overflow-hidden"
-              onClick={() => handleSelect(p)}
+              whileHover={isFull ? {} : { y: -4 }}
+              className={`bg-card border rounded-2xl shadow-sm flex flex-col transition-all group overflow-hidden ${
+                isFull 
+                  ? 'border-red-500/30 opacity-90 cursor-not-allowed' 
+                  : 'border-[rgb(var(--border-rgb))]/30 hover:shadow-lg hover:border-accent/50 cursor-pointer'
+              }`}
+              onClick={() => {
+                if (!isFull) handleSelect(p);
+              }}
             >
               {/* Card Header (Project Name & Mentor) */}
-              <div className="p-6 pb-5 border-b border-[rgb(var(--border-rgb))]/10 bg-bg/30 relative">
-                <div className="absolute top-6 right-6 p-2 bg-accent/10 text-accent rounded-full opacity-0 group-hover:opacity-100 transition-all translate-x-2 group-hover:translate-x-0">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
-                </div>
+              <div className={`p-6 pb-5 border-b relative ${
+                isFull ? 'bg-red-500/5 backdrop-blur-sm border-red-500/10' : 'border-[rgb(var(--border-rgb))]/10 bg-bg/30'
+              }`}>
+                {!isFull && (
+                  <div className="absolute top-6 right-6 p-2 bg-accent/10 text-accent rounded-full opacity-0 group-hover:opacity-100 transition-all translate-x-2 group-hover:translate-x-0">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                  </div>
+                )}
+                
+                {p.capacity !== undefined && (
+                  <div className={`absolute top-6 right-6 p-1.5 rounded-lg border text-[10px] font-bold uppercase tracking-wider shadow-sm flex items-center gap-1.5 backdrop-blur-md transition-all duration-300 ${
+                    isFull 
+                      ? 'bg-red-500/10 text-red-500 border-red-500/20' 
+                      : 'bg-accent/10 text-accent border-accent/20 group-hover:-translate-x-12'
+                  }`}>
+                    <div className={`w-1.5 h-1.5 rounded-full ${isFull ? 'bg-red-500 animate-pulse' : 'bg-accent'}`}></div>
+                    {p.selectedCount || 0} / {p.capacity} Seats
+                  </div>
+                )}
                 
                 <div className="flex items-start gap-4 pr-12">
                   <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-accent to-accent/60 flex items-center justify-center text-[rgb(var(--bg-primary-rgb))] shadow-md flex-shrink-0">
@@ -188,7 +214,8 @@ export default function ProjectDiscoveryTab() {
 
               </div>
             </motion.div>
-          ))}
+            );
+          })}
           
           {projects.length === 0 && (
             <div className="col-span-full text-center py-16 px-4 border-2 border-dashed border-[rgb(var(--border-rgb))]/30 rounded-2xl bg-[rgb(var(--bg-card-rgb))]/20">
