@@ -24,7 +24,11 @@ const NAV: NavGroup[] = [
     items: [
       { to: '/admin/faqs',           label: 'FAQs',          icon: DocIcon },
       { to: '/admin/welcome',        label: 'Welcome',       icon: SparkleIcon },
-      { to: '/admin/batches',        label: 'Programs',      icon: LayersIcon },
+      { to: '/admin/batches',        label: 'Legacy Programs', icon: LayersIcon },
+      // v1.69 — Phase 10: dashboard shortcut to the tabbed
+      // per-program admin views. The two links live side by
+      // side while the migration from /admin/batches completes.
+      { to: '/admin/programs',       label: 'Programs Hub',    icon: LayersIcon },
       { to: '/admin/faqs/review',    label: 'FAQ Review',    icon: ShieldCheckIcon },
       { to: '/admin/auto-answer',    label: 'AI Answers',    icon: SparkleIcon },
       { to: '/admin/faq-audit',     label: 'FAQ Audit',     icon: StethoscopeIcon },
