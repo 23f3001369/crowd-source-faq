@@ -125,13 +125,11 @@ function AppRoutes() {
     <>
       <Routes>
         <Route element={<MainLayout />}>
-          {/* v1.69 — Phase 12: `/` is now the original HomePage
-              (search + popular/recent FAQs + category accordion +
-              top solved + trending issues + FromMeetings). The
-              active program is determined by the admin's
-              BatchContext selection (the default program on
-              cold start, or whatever the admin last picked).
-              Non-admin users do NOT see a program picker on `/`. */}
+          {/* `/` is now the merged DoubtDrop-style FAQ discovery page.
+              The old HomePage (course picker + accordion) is reachable
+              at `/programs` for admins who want the program-portal view.
+              Old bookmarks to /faq still work (rendered by the same
+              FAQPage) so deep-links to /faq/:id keep functioning. */}
           <Route path="/" element={<HomePage />} />
           {/* v1.69 — Phase 12: the program picker (formerly
               served at `/`) is now at `/programs` for explicit
@@ -168,7 +166,6 @@ function AppRoutes() {
             }
           />
 
-          <Route path="/" element={<HomePage />} />
           {/* v1.69 — slug-routed program microsite. Deep-link to a
               specific program (e.g. /program/summership). The home
               page at `/` is the standard FAQ-discovery page, not a

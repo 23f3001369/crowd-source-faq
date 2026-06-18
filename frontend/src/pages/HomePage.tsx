@@ -1,397 +1,899 @@
-// Public FAQ Discovery Page — no auth, no friction.
-// Mounted at /. Renders the hero, sticky search, three top
-// cards (Popular / Recent / Categories), the full category accordion
-// list, and a detail modal for clicked FAQs.
+// Home/FAQ Discovery Page — the single source of truth for the landing portal.
+// Layout (when nothing is selected):
 //
-// All content is scoped to the active batch from BatchContext. If no
-// batch is selected yet, the user is bounced to /explore/select.
+//   HERO  →  "Ask. Discover. Get Solved."  +  stats
+//   SEARCH BAR  (big)
+//   CATEGORY FILTER PILLS  (clickable, with counts)
+//   TWO-COLUMN BODY
+//     left  →  Most Popular  +  Recent FAQs  +  Top Solved Today  +
+//              From Zoom Meetings  +  All FAQs (full 141)
+//     right →  Browse Categories (4×2 icon grid) + Trending Issues
+//   BROWSE ALL CATEGORIES  (full-width, all 14)
+//   CTA  →  "Still have a question?"
+//
+// Every section pulls live data from the backend (no hardcoded content):
+//   /api/faq                                 → 141 FAQs grouped by category
+//   /api/public/popular-faqs?limit=5         → Most Popular (views + read time)
+//   /api/public/recent-faqs?limit=5          → Recent FAQs
+//   /api/faq/recent?source=zoom_transcript   → From Zoom Meetings
+//   /api/community/solved?limit=4            → Top Solved Today
+//   /api/community                           → Trending Issues
+//   /api/search/trending                     → (kept for future use)
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import Navbar from '../components/layout/Navbar';
 import Footer from '../components/layout/Footer';
-import { BatchSwitcher } from '../components/layout/BatchSwitcher';
+import UserActiveProgramIndicator from '../components/layout/UserActiveProgramIndicator';
+import SearchBar from '../components/search/SearchBar';
+import { HomeDoodles } from '../components/ui/PageDoodles';
+import api, { friendlyError } from '../utils/api';
+import type { TrendingQuery } from '../types/ui';
 import { useBatch } from '../context/BatchContext';
-import { useCategories, usePopularFaqs, useRecentFaqs } from '../components/explore/usePublicFaqApi';
-import { useCourses } from '../components/explore/useCourses';
-import type { Course } from '../types/course';
-import InteractiveSearchOverlay from '../components/search/InteractiveSearchOverlay';
-import { ExploreHero } from '../components/explore/ExploreHero';
-import { ExploreSearchResults } from '../components/explore/ExploreSearchResults';
-import { PopularFaqsCard } from '../components/explore/PopularFaqsCard';
-import { RecentFaqsCard } from '../components/explore/RecentFaqsCard';
-import { CategoriesCard } from '../components/explore/CategoriesCard';
-import { CategoryAccordion } from '../components/explore/CategoryAccordion';
-import { PublicFaqDetail } from '../components/explore/PublicFaqDetail';
-import { CardSkeleton, EmptyState } from '../components/explore/ExploreSkeleton';
-import type { PublicFaq } from '../components/explore/types';
+
+// Modular FAQ components — shared utilities
+import {
+  FAQItem,
+  getCategoryIcon,
+  getCategoryDescription,
+  formatCategoryName,
+  getCategoryTone,
+  getQuestionTitle,
+} from '../components/faq/faqUtils';
+import SearchDropdown from '../components/faq/SearchDropdown';
+import SearchFeedback from '../components/faq/SearchFeedback';
+import QuestionList from '../components/faq/QuestionList';
+import QuestionDetail from '../components/faq/QuestionDetail';
+
+// Sidebar / chrome — already built, already wired to live APIs
 import TopSolved from '../components/community/TopSolved';
 import TrendingIssues from '../components/search/TrendingIssues';
 import FromMeetings from '../components/faq/FromMeetings';
 import CTA from '../components/ui/CTA';
-import api, { friendlyError } from '../utils/api';
-import { useAuth } from '../hooks/useAuth';
-import { useAuthGate } from '../context/AuthModalContext';
-import type { SearchResult, TrendingQuery } from '../types/ui';
 
-export default function ExplorePage(): React.ReactElement {
-  // ── Active batch from context ───────────────────────────────────────────
-  const { currentBatch, loading: batchLoading } = useBatch();
+// ── Public-popular FAQ shape (extends FAQItem with view / read metrics) ──
+interface PublicPopularFaq extends FAQItem {
+  popularityScore?: number;
+  guestViewCount?: number;
+  avgReadCompletion?: number;
+  avgTimeSpentRatio?: number;
+  wordCount?: number;
+  expectedReadMs?: number;
+}
+
+// ── Read-time formatter: 8.7s → "< 1 min read", 75s → "2 min read" ────────
+function formatReadTime(ms?: number): string {
+  if (!ms || ms <= 0) return '< 1 min read';
+  const minutes = ms / 60000;
+  if (minutes < 1) return '< 1 min read';
+  return `${Math.round(minutes)} min read`;
+}
+
+// ── View-count formatter: 0 → "0 views", 1 → "1 view", 4 → "4 views" ────
+function formatViews(n?: number): string {
+  const v = n ?? 0;
+  return `${v} ${v === 1 ? 'view' : 'views'}`;
+}
+
+// ── Relative date formatter: 2026-06-13 → "Jun 13" ──────────────────────
+function formatShortDate(dateStr?: string): string {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Sidebar helper — list item used in the full "Browse all categories" section
+// ═══════════════════════════════════════════════════════════════════════════
+function CategoryListItem({
+  name,
+  count,
+  onSelect,
+}: {
+  name: string;
+  count: number;
+  onSelect: () => void;
+}): React.ReactElement {
+  const tone = getCategoryTone(name);
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className="group flex items-center justify-between gap-3 py-3 px-3 -mx-3 rounded-xl hover:bg-cream/60 transition-colors text-left"
+    >
+      <span className="flex items-center gap-2.5 min-w-0">
+        <span className={`shrink-0 ${tone.accent}`}>{getCategoryIcon(name)}</span>
+        <span className="text-sm font-medium text-ink group-hover:text-accent transition-colors line-clamp-1">
+          {formatCategoryName(name)}
+        </span>
+      </span>
+      <span className="flex items-center gap-2 text-[11px] text-ink-faint shrink-0">
+        <span className="tabular-nums">{count}</span>
+        <svg className="text-ink-faint group-hover:text-accent transition-colors" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="m9 18 6-6-6-6" />
+        </svg>
+      </span>
+    </button>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Compact category icon button (the 8-icon sidebar grid)
+// ═══════════════════════════════════════════════════════════════════════════
+function CategoryIconGrid({
+  categories,
+  grouped,
+  onSelect,
+}: {
+  categories: string[];
+  grouped: Record<string, FAQItem[]>;
+  onSelect: (name: string) => void;
+}): React.ReactElement | null {
+  if (categories.length === 0) return null;
+  const visible = categories.slice(0, 8);
+  return (
+    <div className="grid grid-cols-4 gap-2.5">
+      {visible.map((cat) => {
+        const tone = getCategoryTone(cat);
+        return (
+          <button
+            key={cat}
+            type="button"
+            onClick={() => onSelect(cat)}
+            className="group flex flex-col items-center gap-1.5 p-2.5 rounded-xl bg-cream/50 border border-border/60 hover:bg-card hover:border-accent/30 hover:-translate-y-0.5 transition-all duration-200"
+            title={formatCategoryName(cat)}
+          >
+            <span className={`shrink-0 ${tone.accent} group-hover:scale-110 transition-transform`}>
+              {getCategoryIcon(cat)}
+            </span>
+            <span className="text-[10px] font-semibold text-ink-soft group-hover:text-ink line-clamp-1 leading-tight text-center w-full">
+              {formatCategoryName(cat).replace(/^\d+\.\s*/, '').slice(0, 14)}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Numbered FAQ row — used by Most Popular + Recent FAQs lists
+// ═══════════════════════════════════════════════════════════════════════════
+function NumberedFaqRow({
+  rank,
+  item,
+  rightMeta,
+  onOpen,
+}: {
+  rank: number;
+  item: FAQItem;
+  rightMeta?: React.ReactNode;
+  onOpen: (item: FAQItem) => void;
+}): React.ReactElement {
+  const verified = item.reviewStatus === 'verified';
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(item)}
+      className="group w-full text-left flex items-start gap-3 py-3 px-3 -mx-3 rounded-xl hover:bg-cream/60 transition-colors"
+    >
+      {/* Rank circle */}
+      <span className="shrink-0 w-6 h-6 rounded-md bg-cream text-[11px] font-semibold text-ink-faint flex items-center justify-center tabular-nums mt-0.5 border border-border/60 group-hover:bg-card group-hover:text-accent transition-colors">
+        {rank}
+      </span>
+
+      <div className="flex-1 min-w-0">
+        <h3 className="text-sm font-medium text-ink group-hover:text-accent transition-colors leading-snug line-clamp-2">
+          {getQuestionTitle(item)}
+        </h3>
+        {item.answer && (
+          <p className="text-xs text-ink-soft mt-1 line-clamp-1 leading-relaxed">
+            {item.answer}
+          </p>
+        )}
+        <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+          {item.category && (
+            <span className="text-[11px] text-ink-faint bg-mist px-1.5 py-0.5 rounded-md">
+              {formatCategoryName(item.category).replace(/^\d+\.\s*/, '')}
+            </span>
+          )}
+          {verified && (
+            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-success-light text-success flex items-center gap-0.5">
+              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+              Verified
+            </span>
+          )}
+          {item.sourceType === 'zoom_transcript' && (
+            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-cyan-50 text-cyan-700 dark:bg-cyan-500/10 dark:text-cyan-300 border border-cyan-200/40">
+              From Zoom
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Right-aligned meta (views · read time / date) */}
+      <div className="shrink-0 text-right text-[11px] text-ink-faint whitespace-nowrap mt-0.5">
+        {rightMeta}
+      </div>
+    </button>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Skeleton row used while data is loading
+// ═══════════════════════════════════════════════════════════════════════════
+function NumberedSkeletonRow({ rank }: { rank: number }): React.ReactElement {
+  return (
+    <div className="flex items-start gap-3 py-3 px-3 -mx-3">
+      <span className="shrink-0 w-6 h-6 rounded-md bg-mist animate-pulse flex items-center justify-center text-[11px] tabular-nums text-transparent">{rank}</span>
+      <div className="flex-1">
+        <div className="h-3 bg-mist rounded animate-pulse w-4/5 mb-1.5" />
+        <div className="h-2.5 bg-mist rounded animate-pulse w-full mb-1" />
+        <div className="h-2.5 bg-mist rounded animate-pulse w-2/3" />
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Main page
+// ═══════════════════════════════════════════════════════════════════════════
+export default function HomePage() {
+  const { currentBatch } = useBatch();
   const batchId = currentBatch?._id ?? null;
 
-  // ── Course picker (v1.69) ────────────────────────────────────────────────
-  // The selected course id lives in the URL as ?course=<id> so deep
-  // links are shareable. Reading from the search param on mount +
-  // writing back on click keeps the picker URL-driven.
-  const [searchParams, setSearchParams] = useSearchParams();
-  const selectedCourseId = searchParams.get('course');
-  const setSelectedCourseId = useCallback((id: string | null): void => {
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev);
-      if (id) next.set('course', id);
-      else next.delete('course');
-      return next;
-    }, { replace: true });
-  }, [setSearchParams]);
+  // ── Core data ────────────────────────────────────────────────────────────
+  const [grouped, setGrouped] = useState<Record<string, FAQItem[]>>({});
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  // ── Data: courses for the current batch, plus the chrome data ───────
-  const { data: coursesData, loading: coursesLoading } = useCourses(batchId);
-  const courses = coursesData?.courses ?? [];
-  const selectedCourse: Course | null = useMemo(
-    () => courses.find((c) => c._id === selectedCourseId) ?? null,
-    [courses, selectedCourseId]
-  );
+  // ── Discovery data (parallel feeds) ─────────────────────────────────────
+  const [popularFaqs, setPopularFaqs] = useState<PublicPopularFaq[]>([]);
+  const [popularLoading, setPopularLoading] = useState(true);
+  const [recentPublicFaqs, setRecentPublicFaqs] = useState<PublicPopularFaq[]>([]);
+  const [recentLoading, setRecentLoading] = useState(true);
+  const [trendingWords, setTrendingWords] = useState<TrendingQuery[]>([]);
 
-  const { data: popularData, loading: popularLoading } = usePopularFaqs(batchId, selectedCourseId, 5);
-  const { data: recentData, loading: recentLoading } = useRecentFaqs(batchId, selectedCourseId, 5);
-  const { data: categoriesData, loading: categoriesLoading } = useCategories(batchId, selectedCourseId, false);
+  // ── UI state ─────────────────────────────────────────────────────────────
+  const [activeCategory, setActiveCategory] = useState('');
+  const [activeQuestion, setActiveQuestion] = useState<FAQItem | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<FAQItem[] | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [sortOption, setSortOption] = useState('relevant');
+  const [visibleCount, setVisibleCount] = useState(8);
 
-  const categories = categoriesData?.categories ?? [];
-  const totalFaqs = useMemo(
-    () => categories.reduce((s, c) => s + c.count, 0),
-    [categories],
-  );
+  const searchBarRef = useRef<HTMLInputElement>(null);
+  const allCategoriesRef = useRef<HTMLDivElement>(null);
 
-  // ── UI state ────────────────────────────────────────────────────────────
-  const [query, setQuery] = useState('');
-  const [activeCategory, setActiveCategory] = useState<string | null>(null);
-  const [openFaq, setOpenFaq] = useState<PublicFaq | null>(null);
-  const [openCategoryName, setOpenCategoryName] = useState<string | null>(null);
-  const [searchSticky, setSearchSticky] = useState(false);
-  const sectionAnchorRefs = useRef<Map<string, React.RefObject<HTMLDivElement>>>(new Map());
-  const searchAnchorRef = useRef<HTMLDivElement>(null);
+  const [resultFaqId, setResultFaqId] = useState<string | undefined>(undefined);
+  const { id: urlFaqId } = useParams<string>();
+  const navigate = useNavigate();
 
-  // Sticky search bar: appears once the user scrolls past the hero.
+  const scrollToTop = useCallback(() => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, []);
+
+  const scrollToAllCategories = useCallback(() => {
+    allCategoriesRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
+
+  // ── Fetch all data sources dynamically when batchId changes ──────────────
   useEffect(() => {
-    const onScroll = (): void => {
-      const anchor = searchAnchorRef.current;
-      if (!anchor) return;
-      const rect = anchor.getBoundingClientRect();
-      setSearchSticky(rect.bottom < 16);
-    };
-    onScroll();
-    window.addEventListener('scroll', onScroll, { passive: true });
-    return () => window.removeEventListener('scroll', onScroll);
-  }, []);
+    if (!batchId) return;
+    let mounted = true;
 
-  // Ref accessor — lazy-creates a ref for a category name.
-  const getSectionRef = useCallback((name: string): React.RefObject<HTMLDivElement> => {
-    let ref = sectionAnchorRefs.current.get(name);
-    if (!ref) {
-      ref = React.createRef<HTMLDivElement>();
-      sectionAnchorRefs.current.set(name, ref);
+    setLoading(true);
+    setPopularLoading(true);
+    setRecentLoading(true);
+
+    // /api/faq — full grouped list
+    api.get('/faq', { params: { batchId } })
+      .then((res) => {
+        if (!mounted) return;
+        setGrouped(res.data.grouped || {});
+        setTotal(res.data.total || 0);
+      })
+      .catch((err: unknown) => {
+        if (!mounted) return;
+        const message = (err as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed to load FAQs. Please try again.';
+        setError(message);
+      })
+      .finally(() => { if (mounted) setLoading(false); });
+
+    // /api/public/popular-faqs — Most Popular (views, read time)
+    api.get('/public/popular-faqs', { params: { limit: 6, batchId } })
+      .then((res) => { if (mounted) setPopularFaqs(res.data?.faqs || []); })
+      .catch(() => { /* non-fatal */ })
+      .finally(() => { if (mounted) setPopularLoading(false); });
+
+    // /api/public/recent-faqs — Recent FAQs
+    api.get('/public/recent-faqs', { params: { limit: 6, batchId } })
+      .then((res) => { if (mounted) setRecentPublicFaqs(res.data?.faqs || []); })
+      .catch(() => { /* non-fatal */ })
+      .finally(() => { if (mounted) setRecentLoading(false); });
+
+    // /api/search/trending — for trending queries
+    api.get('/search/trending', { params: { batchId } })
+      .then((res) => { if (mounted) setTrendingWords((res.data.trending || []).map((t: { query: string; count: number }) => ({ query: t.query, count: t.count }))); })
+      .catch((err: unknown) => { console.error(friendlyError(err, 'Failed to load trending queries.')); });
+
+    return () => { mounted = false; };
+  }, [batchId]);
+
+  // ── Derived data ─────────────────────────────────────────────────────────
+  const categories = useMemo(() => Object.keys(grouped).sort(), [grouped]);
+
+  const flatQuestions = useMemo(() => (
+    categories.flatMap((name) => (grouped[name] || []).map((item) => ({
+      ...item,
+      category: item.category || name,
+      source: item.source || 'faq',
+    })))
+  ), [categories, grouped]);
+
+  // ── Deep-link handler (/faq/:id from URL) ───────────────────────────────
+  useEffect(() => {
+    if (!urlFaqId) return;
+    if (grouped && Object.keys(grouped).length > 0) {
+      for (const [cat, items] of Object.entries(grouped)) {
+        const found = items.find((item) => item._id === urlFaqId);
+        if (found) {
+          setActiveQuestion({ ...found, category: cat });
+          setActiveCategory(cat);
+          return;
+        }
+      }
     }
-    return ref;
-  }, []);
+    api.get(`/faq/${urlFaqId}`)
+      .then((res) => {
+        const faq = res.data;
+        if (faq && faq._id) {
+          setActiveQuestion({ ...faq, category: faq.category || '' });
+          setActiveCategory(faq.category || '');
+        }
+      })
+      .catch(() => { /* FAQ not found or access denied */ });
+  }, [urlFaqId, grouped]);
 
-  // Smooth-scroll to a category and auto-open it.
-  const handleSelectCategory = useCallback(
-    (name: string) => {
-      if (!name) {
-        document.getElementById('all-categories')?.scrollIntoView({ behavior: 'smooth' });
-        return;
+  // Pre-selected FAQ from homepage navigation (highlight signal)
+  useEffect(() => {
+    if (!grouped || Object.keys(grouped).length === 0) return;
+    const highlightStr = sessionStorage.getItem('yaksha_faq_highlight');
+    if (!highlightStr) return;
+    try {
+      const highlight = JSON.parse(highlightStr) as FAQItem;
+      sessionStorage.removeItem('yaksha_faq_highlight');
+      const category = highlight.category || '';
+      if (category && grouped[category]) {
+        const found = grouped[category].find((item) => item._id === highlight._id);
+        if (found) {
+          setActiveQuestion({ ...found, category });
+          setActiveCategory(category);
+        }
       }
-      const ref = sectionAnchorRefs.current.get(name);
-      if (ref?.current) {
-        ref.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        setOpenCategoryName(name);
-      } else {
-        setOpenCategoryName(name);
-        window.setTimeout(() => {
-          sectionAnchorRefs.current.get(name)?.current?.scrollIntoView({
-            behavior: 'smooth',
-            block: 'start',
-          });
-        }, 50);
-      }
-    },
-    [],
-  );
+    } catch {
+      sessionStorage.removeItem('yaksha_faq_highlight');
+    }
+  }, [grouped]);
 
-  const isCategoryOpen = (name: string): boolean =>
-    openCategoryName === name || (activeCategory === name && query.length === 0);
+  // ── Search bookkeeping ──────────────────────────────────────────────────
+  useEffect(() => {
+    setVisibleCount(8);
+  }, [activeCategory, searchResults, searchQuery]);
 
-  const showingSearch = query.length >= 2;
+  useEffect(() => {
+    if (searchQuery.trim().length === 0) {
+      setSearchResults(null);
+      setSearchLoading(false);
+    }
+  }, [searchQuery]);
 
-  // ── Guard: no batch picked yet → friendly empty state ──────────────
-  // The BatchContext auto-picks a default batch on cold start if one
-  // exists. If no batches exist at all (seed never ran) we render
-  // an empty state with a hint, instead of bouncing to a picker
-  // page that no longer exists at `/explore/select`.
-  if (batchLoading && !currentBatch) {
-    return (
-      <div className="min-h-screen bg-bg flex items-center justify-center">
-        <p className="text-sm text-ink-soft">Loading…</p>
-      </div>
-    );
-  }
-  if (!currentBatch) {
-    return (
-      <div className="min-h-screen bg-bg text-ink flex flex-col">
-        <main className="flex-1 max-w-3xl mx-auto px-4 sm:px-6 pt-32 pb-16 text-center">
-          <h1 className="font-serif text-3xl text-ink mb-3">No programs yet</h1>
-          <p className="text-sm text-ink-soft">
-            Programs are managed from{' '}
-            <a href="/admin/batches" className="text-accent hover:underline font-medium">/admin/batches</a>.
-            Once an admin creates a program, its FAQs will appear here.
-          </p>
-        </main>
-      </div>
-    );
-  }
+  useEffect(() => {
+    if (Array.isArray(searchResults) && searchResults.length > 0) {
+      setResultFaqId((searchResults[0] as FAQItem)._id);
+    }
+  }, [searchResults]);
 
+  const activeCategoryItems = activeCategory ? (grouped[activeCategory] || []) : [];
+  const activeCategoryMeta = getCategoryDescription(activeCategoryItems);
+
+  const searchActive = searchQuery.trim().length >= 3 && Array.isArray(searchResults);
+  const showDropdown = searchQuery.trim().length > 0 && !searchActive;
+
+  const dropdownItems = useMemo(() => {
+    if (Array.isArray(searchResults) && searchQuery.trim().length >= 3) {
+      return searchResults;
+    }
+    if (!searchQuery.trim()) {
+      return flatQuestions.slice(0, 5);
+    }
+    const normalized = searchQuery.trim().toLowerCase();
+    return flatQuestions.filter((item) => (
+      getQuestionTitle(item).toLowerCase().includes(normalized)
+    )).slice(0, 5);
+  }, [flatQuestions, searchResults, searchQuery]);
+
+  const relatedItems = useMemo(() => {
+    if (!activeQuestion?.category) return [];
+    const pool = grouped[activeQuestion.category] || [];
+    return pool.filter((item) => item._id !== activeQuestion._id).slice(0, 5);
+  }, [activeQuestion, grouped]);
+
+  // ── Handlers ────────────────────────────────────────────────────────────
+  const handleCategoryOpen = (name: string) => {
+    setActiveCategory(name);
+    setActiveQuestion(null);
+    setSearchQuery('');
+    setSearchResults(null);
+    setSearchLoading(false);
+    setVisibleCount(8);
+    window.setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 50);
+  };
+
+  const handleQuestionOpen = (item: FAQItem) => {
+    setActiveQuestion(item);
+    setSearchQuery('');
+    setSearchResults(null);
+    scrollToTop();
+  };
+
+  const handleBackToCategories = () => {
+    setActiveCategory('');
+    setActiveQuestion(null);
+  };
+
+  const handleBackFromDetail = () => {
+    const fromHomepage = !!sessionStorage.getItem('yaksha_faq_highlight');
+    sessionStorage.removeItem('yaksha_faq_highlight');
+    if (fromHomepage) {
+      navigate('/');
+      return;
+    }
+    setActiveQuestion(null);
+  };
+
+  const handleSearchChange = (value: string) => {
+    setSearchQuery(value);
+    if (value.trim()) {
+      setActiveCategory('');
+      setActiveQuestion(null);
+      setSearchResults(null);
+    }
+  };
+
+  const handleClearSearch = () => {
+    setSearchQuery('');
+    setSearchResults(null);
+    setSearchLoading(false);
+  };
+
+  const runSearch = async (q: string) => {
+    const queryStr = q.trim();
+    if (queryStr.length < 3) return;
+    setSearchLoading(true);
+    setError('');
+    try {
+      const res = await api.post('/search', { query: queryStr });
+      setSearchResults(res.data.results || []);
+    } catch {
+      setSearchResults([]);
+      setError('Search failed. Please try again.');
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  // True when the user is browsing the discovery landing (nothing selected)
+  const showDiscovery = !loading && !error && !activeQuestion && !searchActive && !activeCategory;
+
+  // ── Render ──────────────────────────────────────────────────────────────
   return (
-    <>
-      {/* Curly bracket doodle — left of hero */}
-      <div className="absolute -top-6 -left-16 hidden lg:block" style={{ pointerEvents: 'none' }} aria-hidden="true">
-        <svg width="50" height="100" viewBox="0 0 50 100" fill="none" style={{ opacity: 0.45 }}>
-          <path d="M40 8 C26 8, 22 18, 22 28 C22 38, 16 44, 6 46 C16 48, 22 54, 22 64 C22 74, 26 84, 40 84" stroke="var(--deco-stroke)" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
-        </svg>
-      </div>
+    <div className="min-h-screen bg-bg grid-bg relative">
+      <HomeDoodles />
+      <Navbar />
 
-      {/* "Let's solve it!" speech bubble */}
-      <div className="absolute -top-8 left-[40px] hidden lg:block" style={{ pointerEvents: 'none', transform: 'rotate(-6deg)' }} aria-hidden="true">
-        <svg width="105" height="80" viewBox="0 0 105 80" fill="none" style={{ opacity: 0.45 }}>
-          <ellipse cx="52" cy="28" rx="42" ry="22" stroke="var(--deco-stroke)" strokeWidth="1.5" strokeDasharray="6 4" fill="none"/>
-          <path d="M68 46 L80 68 L62 44" stroke="var(--deco-stroke)" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-          <text x="22" y="25" fontSize="11" fontFamily="'DM Serif Display', serif" fontStyle="italic" fill="var(--deco-stroke)" opacity="0.85">Let&apos;s</text>
-          <text x="18" y="38" fontSize="11" fontFamily="'DM Serif Display', serif" fontStyle="italic" fill="var(--deco-stroke)" opacity="0.85">solve it!</text>
-        </svg>
-      </div>
+      <main className="max-w-[1200px] mx-auto px-4 sm:px-6 pt-[112px] sm:pt-[128px] pb-10 relative z-10">
+        {/* Active program pill (v1.69) */}
+        <div className="flex justify-center">
+          <UserActiveProgramIndicator />
+        </div>
 
-          {/* ─── Search results (only when query has content) ───────── */}
-          {showingSearch && (
-            <ExploreSearchResults
-              query={query}
-              category={activeCategory}
-              batchId={batchId}
-              courseId={selectedCourseId}
-              onSelectFaq={setOpenFaq}
-              onClear={() => setQuery('')}
-            />
+        {/* ─── HERO ──────────────────────────────────────────────────── */}
+        <section className="text-center pt-3 pb-2 relative">
+          <h1 className="font-serif text-3xl sm:text-4xl md:text-[3.2rem] leading-[1.1] tracking-tight text-ink mt-3">
+            Ask. Discover. Get{' '}
+            <span className="doodle-underline font-serif" style={{ fontWeight: 700 }}>Solved.</span>
+          </h1>
+          <p className="text-sm sm:text-base text-ink-soft mt-4 max-w-xl mx-auto leading-relaxed">
+            Search your doubt or explore solved questions from the community.
+          </p>
+          {total > 0 && (
+            <p className="text-[11px] uppercase tracking-[0.18em] font-semibold text-ink-faint mt-3">
+              {total} {total === 1 ? 'FAQ' : 'FAQs'} · {categories.length} categories
+            </p>
           )}
+        </section>
 
-          {/* ─── Course picker (v1.69) ─────────────────────────────────── */}
-          {/* A horizontal pill bar above the cards. "All courses" is the
-              default (no ?course= param). Clicking a course scopes the
-              Popular / Recent / Categories cards and the accordion
-              to that course's FAQs. */}
-          {!showingSearch && courses.length > 0 && (
-            <div className="mt-8" data-testid="course-picker">
-              <div className="flex items-center justify-between mb-3">
-                <p className="text-xs font-semibold uppercase tracking-wider text-ink-faint">
-                  Courses
-                </p>
-                {selectedCourse && (
-                  <button
-                    type="button"
-                    onClick={() => setSelectedCourseId(null)}
-                    className="text-[11px] font-medium text-accent hover:underline"
-                  >
-                    Clear course filter
-                  </button>
-                )}
-              </div>
-              <div className="flex flex-wrap gap-2">
+        {/* ─── SEARCH BAR ───────────────────────────────────────────── */}
+        <section className="relative max-w-2xl mx-auto mt-8 mb-4">
+          <div className={`relative ${showDropdown ? 'z-40' : 'z-20'}`}>
+            <SearchBar
+              ref={searchBarRef}
+              value={searchQuery}
+              onQueryChange={handleSearchChange}
+              onResults={(res) => setSearchResults(res as unknown as FAQItem[])}
+              onLoading={setSearchLoading}
+              onError={(err) => setError(err || '')}
+              placeholder="Ask anything about your internship..."
+              disableSuggestions={true}
+            />
+
+            {showDropdown && (
+              <SearchDropdown
+                query={searchQuery}
+                items={dropdownItems}
+                categories={categories}
+                onSelectQuestion={handleQuestionOpen}
+                onSelectCategory={handleCategoryOpen}
+                onClear={handleClearSearch}
+                loading={searchLoading}
+              />
+            )}
+          </div>
+        </section>
+
+        {/* ─── CATEGORY FILTER PILLS (clickable horizontal row) ─────── */}
+        {showDiscovery && categories.length > 0 && (
+          <nav
+            className="mt-3 max-w-5xl mx-auto px-1 flex flex-wrap justify-center gap-2"
+            aria-label="Filter by category"
+          >
+            <button
+              type="button"
+              onClick={() => handleCategoryOpen('')}
+              className={`px-3 py-1.5 rounded-full text-[11px] font-semibold border transition-all duration-200 ${
+                !activeCategory
+                  ? 'bg-accent text-accent-text border-accent/60 shadow-[0_6px_18px_rgba(90,122,90,0.18)]'
+                  : 'bg-card text-ink border-border/70 hover:bg-cream hover:-translate-y-0.5'
+              }`}
+            >
+              All
+            </button>
+            {categories.slice(0, 11).map((cat) => {
+              const isActive = activeCategory === cat;
+              const count = grouped[cat]?.length ?? 0;
+              return (
                 <button
+                  key={cat}
                   type="button"
-                  onClick={() => setSelectedCourseId(null)}
-                  className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-xs font-semibold whitespace-nowrap transition-all duration-200 ${
-                    !selectedCourseId
-                      ? 'bg-accent text-accent-text border border-accent/50 shadow-[0_10px_26px_rgba(90,122,90,0.25)]'
-                      : 'bg-card/80 text-ink border border-border/60 hover:bg-cream hover:-translate-y-0.5 hover:shadow-subtle'
+                  onClick={() => handleCategoryOpen(cat)}
+                  className={`px-3 py-1.5 rounded-full text-[11px] font-semibold border transition-all duration-200 ${
+                    isActive
+                      ? 'bg-accent text-accent-text border-accent/60 shadow-[0_6px_18px_rgba(90,122,90,0.18)]'
+                      : 'bg-card text-ink border-border/70 hover:bg-cream hover:-translate-y-0.5'
                   }`}
                 >
-                  All courses
+                  {formatCategoryName(cat)} · {count}
                 </button>
-                {courses.map((c) => {
-                  const isActive = selectedCourseId === c._id;
-                  return (
-                    <button
-                      key={c._id}
-                      type="button"
-                      onClick={() => setSelectedCourseId(c._id)}
-                      className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-xs font-semibold whitespace-nowrap transition-all duration-200 ${
-                        isActive
-                          ? 'bg-accent text-accent-text border border-accent/50 shadow-[0_10px_26px_rgba(90,122,90,0.25)]'
-                          : 'bg-card/80 text-ink border border-border/60 hover:bg-cream hover:-translate-y-0.5 hover:shadow-subtle'
-                      }`}
-                      title={c.description || c.name}
-                    >
-                      {c.name}
-                      {c.faqCount > 0 && (
-                        <span className="text-[10px] text-ink-faint font-normal">
-                          ({c.faqCount})
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
+              );
+            })}
+            {categories.length > 11 && (
+              <button
+                type="button"
+                onClick={scrollToAllCategories}
+                className="px-3 py-1.5 rounded-full text-[11px] font-semibold border border-dashed border-border/70 text-ink-soft hover:text-ink hover:bg-cream transition-all duration-200"
+              >
+                + {categories.length - 11} more
+              </button>
+            )}
+          </nav>
+        )}
+
+        {/* ─── LOADING / ERROR STATES ──────────────────────────────── */}
+        {loading && (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 mt-10">
+            {[1, 2, 3, 4].map((i) => (
+              <div key={i} className="h-[220px] rounded-2xl border border-border bg-card/70 animate-pulse" />
+            ))}
+          </div>
+        )}
+
+        {error && !loading && (
+          <div className="mt-8 rounded-2xl bg-danger-light border border-danger/15 p-6 text-center space-y-3">
+            <p className="text-sm text-danger font-medium">{error}</p>
+            <button
+              onClick={() => { setError(''); setLoading(true); api.get('/faq').then(res => { setGrouped(res.data.grouped || {}); setTotal(res.data.total || 0); }).catch((err: unknown) => { const m = (err as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed to load FAQs.'; setError(m); }).finally(() => setLoading(false)); }}
+              className="px-5 py-2 text-sm font-medium bg-danger text-accent-text rounded-full hover:bg-danger/90 transition-colors"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {/* ─── DETAIL VIEW (when a question is opened) ──────────────── */}
+        {!loading && !error && activeQuestion && (
+          <QuestionDetail
+            item={activeQuestion}
+            relatedItems={relatedItems}
+            onBack={handleBackFromDetail}
+            onSelectRelated={handleQuestionOpen}
+            backLabel={
+              searchActive
+                ? 'Back to Search Results'
+                : activeCategory
+                ? `Back to ${formatCategoryName(activeCategory)}`
+                : 'Back to Categories'
+            }
+          />
+        )}
+
+        {/* ─── SEARCH RESULTS ───────────────────────────────────────── */}
+        {!loading && !error && !activeQuestion && searchActive && (
+          <section className="max-w-4xl mx-auto">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+              <div>
+                <p className="text-xs font-semibold text-ink-faint uppercase tracking-wide">Search results</p>
+                <h2 className="text-lg font-semibold text-ink">Results for &quot;{searchQuery}&quot;</h2>
               </div>
+              <button
+                onClick={handleClearSearch}
+                className="text-xs font-semibold text-ink-soft hover:text-ink transition-colors"
+              >
+                Clear search
+              </button>
             </div>
-          )}
+            <QuestionList
+              items={searchResults || []}
+              loading={searchLoading}
+              sortOption={sortOption}
+              onSortChange={setSortOption}
+              visibleCount={visibleCount}
+              onLoadMore={() => setVisibleCount((prev) => prev + 6)}
+              emptyMessage="No results yet. Try another keyword or browse a category."
+            />
+          </section>
+        )}
 
-          {/* ─── Top three cards: Popular / Recent / Categories ────── */}
-          {!showingSearch && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
-              <PopularFaqsCard batchId={batchId} courseId={selectedCourseId} onSelectFaq={setOpenFaq} />
-              <RecentFaqsCard batchId={batchId} courseId={selectedCourseId} onSelectFaq={setOpenFaq} />
-              <CategoriesCard batchId={batchId} courseId={selectedCourseId} onSelectCategory={handleSelectCategory} />
-            </div>
-          )}
-
-      {/* Small star — left of hero */}
-      <div className="absolute top-[20px] left-[16%] hidden lg:block" style={{ pointerEvents: 'none' }} aria-hidden="true">
-        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" style={{ opacity: 0.45 }}>
-          <path d="M9 0 L9 18 M0 9 L18 9" stroke="var(--section-icon)" strokeWidth="1.5" strokeLinecap="round"/>
-          <path d="M3 3 L15 15 M15 3 L3 15" stroke="var(--section-icon)" strokeWidth="1.2" strokeLinecap="round"/>
-        </svg>
-      </div>
-
-              {!showingSearch && (
-                <section>
-                  {categoriesLoading ? (
-                    <div className="space-y-3">
-                      {[1, 2, 3, 4].map((i) => (
-                        <CardSkeleton key={i} rows={2} />
-                      ))}
-                    </div>
-                  ) : categories.length === 0 ? (
-                    <EmptyState
-                      title="No categories yet"
-                      hint="Check back after the first FAQs are published for this program."
-                    />
-                  ) : (
-                    <div className="space-y-3">
-                      {categories.map((cat) => (
-                        <CategoryAccordion
-                          key={cat.name}
-                          category={cat}
-                          batchId={batchId}
-                          courseId={selectedCourseId}
-                          scrollAnchorRef={getSectionRef(cat.name)}
-                          openOnMount={isCategoryOpen(cat.name)}
-                          onSelectFaq={setOpenFaq}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </section>
+        {/* ─── CATEGORY VIEW ────────────────────────────────────────── */}
+        {!loading && !error && !activeQuestion && !searchActive && activeCategory && (
+          <section className="max-w-4xl mx-auto">
+            <div className="mb-6">
+              <button
+                onClick={handleBackToCategories}
+                className="inline-flex items-center gap-2 text-xs font-semibold text-ink-soft hover:text-ink transition-colors"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="15 18 9 12 15 6" />
+                </svg>
+                Back to all categories
+              </button>
+              <h2 className="mt-3 text-xl font-semibold text-ink flex items-center gap-2">
+                <span className={`w-9 h-9 rounded-xl bg-mist flex items-center justify-center ${getCategoryTone(activeCategory).accent}`}>
+                  {getCategoryIcon(activeCategory)}
+                </span>
+                {formatCategoryName(activeCategory)}
+                <span className="ml-1 text-[11px] uppercase tracking-wider font-semibold text-ink-faint">
+                  · {activeCategoryItems.length} {activeCategoryItems.length === 1 ? 'question' : 'questions'}
+                </span>
+              </h2>
+              {activeCategoryMeta && (
+                <p className="mt-2 text-sm text-ink-soft max-w-2xl">
+                  {activeCategoryMeta}
+                </p>
               )}
+            </div>
+            <QuestionList
+              items={activeCategoryItems.map((item) => ({
+                ...item,
+                category: activeCategory,
+                source: item.source || 'faq',
+              }))}
+              loading={false}
+              sortOption={sortOption}
+              onSortChange={setSortOption}
+              visibleCount={visibleCount}
+              onLoadMore={() => setVisibleCount((prev) => prev + 6)}
+              emptyMessage="No questions in this category yet."
+            />
+          </section>
+        )}
 
-      {/* Tick accents — left, under the small star */}
-      <div className="absolute top-[64px] left-[20%] hidden lg:block" style={{ pointerEvents: 'none', transform: 'rotate(-18deg)' }} aria-hidden="true">
-        <svg width="22" height="16" viewBox="0 0 22 16" fill="none" style={{ opacity: 0.40 }}>
-          <path d="M3 12 L8 3" stroke="var(--section-icon)" strokeWidth="1.5" strokeLinecap="round"/>
-          <path d="M12 14 L17 5" stroke="var(--section-icon)" strokeWidth="1.5" strokeLinecap="round"/>
-        </svg>
-      </div>
+        {/* ─── DISCOVERY LANDING ─────────────────────────────────────── */}
+        {showDiscovery && (
+          <>
+            <section className="grid grid-cols-1 lg:grid-cols-3 gap-8 mt-10">
+              {/* LEFT — main column */}
+              <div className="lg:col-span-2 space-y-12">
+                {/* ───── MOST POPULAR (Last 7 days, numbered) ───── */}
+                <section aria-labelledby="most-popular-heading">
+                  <div className="bg-card rounded-2xl border border-border p-5 sm:p-6 shadow-subtle">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" className="text-accent" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                        </svg>
+                        <h2 id="most-popular-heading" className="font-serif text-lg text-ink leading-none">Most Popular</h2>
+                        <span className="text-[10px] text-ink-faint uppercase tracking-wider font-semibold ml-1">Last 7 days</span>
+                      </div>
+                    </div>
+                    <div className="divide-y divide-border/40">
+                      {popularLoading
+                        ? [1, 2, 3, 4, 5].map((n) => <NumberedSkeletonRow key={n} rank={n} />)
+                        : popularFaqs.length === 0
+                          ? <p className="text-xs text-ink-soft py-3">No popular FAQs yet — once interns start viewing, they'll show up here.</p>
+                          : popularFaqs.slice(0, 5).map((item, idx) => (
+                              <NumberedFaqRow
+                                key={item._id}
+                                rank={idx + 1}
+                                item={item}
+                                rightMeta={
+                                  <span className="block">
+                                    {formatViews(item.guestViewCount)}
+                                    <span className="mx-1">·</span>
+                                    {formatReadTime(item.expectedReadMs)}
+                                  </span>
+                                }
+                                onOpen={handleQuestionOpen}
+                              />
+                            ))
+                      }
+                    </div>
+                  </div>
+                </section>
 
-      {/* Swirl arrow — left side */}
-      <div className="absolute top-[120px] -left-10 hidden lg:block" style={{ pointerEvents: 'none' }} aria-hidden="true">
-        <svg width="80" height="70" viewBox="0 0 80 70" fill="none" style={{ opacity: 0.45 }}>
-          <path d="M10 14 C2 26, 10 38, 22 36 C34 34, 34 20, 24 18 C14 16, 8 28, 18 38 C30 50, 48 56, 66 56" stroke="var(--deco-stroke)" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
-          <path d="M58 50 L66 56 L58 62" stroke="var(--deco-stroke)" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-        </svg>
-      </div>
+                {/* ───── RECENT FAQs (Newest, numbered) ───── */}
+                <section aria-labelledby="recent-faqs-heading">
+                  <div className="bg-card rounded-2xl border border-border p-5 sm:p-6 shadow-subtle">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" className="text-accent" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <circle cx="12" cy="12" r="10" />
+                          <polyline points="12 6 12 12 16 14" />
+                        </svg>
+                        <h2 id="recent-faqs-heading" className="font-serif text-lg text-ink leading-none">Recent FAQs</h2>
+                        <span className="text-[10px] text-ink-faint uppercase tracking-wider font-semibold ml-1">Newest</span>
+                      </div>
+                    </div>
+                    <div className="divide-y divide-border/40">
+                      {recentLoading
+                        ? [1, 2, 3, 4, 5].map((n) => <NumberedSkeletonRow key={n} rank={n} />)
+                        : recentPublicFaqs.length === 0
+                          ? <p className="text-xs text-ink-soft py-3">No recent FAQs yet.</p>
+                          : recentPublicFaqs.slice(0, 5).map((item, idx) => (
+                              <NumberedFaqRow
+                                key={item._id}
+                                rank={idx + 1}
+                                item={item}
+                                rightMeta={
+                                  <span className="block">
+                                    {formatShortDate(item.createdAt)}
+                                    {item.expectedReadMs ? <><span className="mx-1">·</span>{formatReadTime(item.expectedReadMs)}</> : null}
+                                  </span>
+                                }
+                                onOpen={handleQuestionOpen}
+                              />
+                            ))
+                      }
+                    </div>
+                  </div>
+                </section>
 
-      {/* Lightbulb doodle — right of hero */}
-      <div className="absolute -top-4 -right-14 hidden lg:block" style={{ pointerEvents: 'none' }} aria-hidden="true">
-        <svg width="55" height="75" viewBox="0 0 55 75" fill="none" style={{ opacity: 0.45 }}>
-          <path d="M27 12 C16 12, 10 20, 10 28 C10 36, 16 40, 20 46 L34 46 C38 40, 44 36, 44 28 C44 20, 38 12, 27 12Z" stroke="var(--section-icon)" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
-          <line x1="20" y1="50" x2="34" y2="50" stroke="var(--section-icon)" strokeWidth="1.5" strokeLinecap="round"/>
-          <line x1="22" y1="54" x2="32" y2="54" stroke="var(--section-icon)" strokeWidth="1.5" strokeLinecap="round"/>
-          <line x1="27" y1="2" x2="27" y2="7" stroke="var(--section-icon)" strokeWidth="1.5" strokeLinecap="round"/>
-          <line x1="8" y1="12" x2="12" y2="16" stroke="var(--section-icon)" strokeWidth="1.5" strokeLinecap="round"/>
-          <line x1="46" y1="12" x2="42" y2="16" stroke="var(--section-icon)" strokeWidth="1.5" strokeLinecap="round"/>
-          <line x1="2" y1="28" x2="7" y2="28" stroke="var(--section-icon)" strokeWidth="1.5" strokeLinecap="round"/>
-          <line x1="47" y1="28" x2="52" y2="28" stroke="var(--section-icon)" strokeWidth="1.5" strokeLinecap="round"/>
-        </svg>
-      </div>
+                {/* ───── TOP SOLVED TODAY (4-card grid from community) ───── */}
+                <TopSolved />
 
-      {/* Tick accents — left of the lightbulb */}
-      <div className="absolute top-0 right-[8%] hidden lg:block" style={{ pointerEvents: 'none', transform: 'rotate(-14deg)' }} aria-hidden="true">
-        <svg width="26" height="18" viewBox="0 0 26 18" fill="none" style={{ opacity: 0.42 }}>
-          <path d="M4 14 L10 4" stroke="var(--deco-stroke)" strokeWidth="1.5" strokeLinecap="round"/>
-          <path d="M14 16 L20 6" stroke="var(--deco-stroke)" strokeWidth="1.5" strokeLinecap="round"/>
-        </svg>
-      </div>
+                {/* ───── FROM ZOOM MEETINGS ───── */}
+                <FromMeetings />
 
-      {/* Question mark doodle — right side */}
-      <div className="absolute top-[210px] -right-14 hidden lg:block" style={{ pointerEvents: 'none' }} aria-hidden="true">
-        <svg width="40" height="60" viewBox="0 0 40 60" fill="none" style={{ opacity: 0.45 }}>
-          <path d="M12 16 C12 6, 28 6, 28 16 C28 24, 20 26, 20 36" stroke="var(--deco-stroke)" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
-          <circle cx="20" cy="44" r="2.5" fill="var(--deco-stroke-soft)"/>
-        </svg>
-      </div>
+                {/* ───── ALL FAQs (full live list, 141 questions) ───── */}
+                <section aria-labelledby="all-faqs-heading">
+                  <div className="flex items-center justify-between mb-5">
+                     <div className="flex items-center gap-2">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" className="text-accent" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+                      </svg>
+                      <h2 id="all-faqs-heading" className="font-serif text-xl text-ink">All FAQs</h2>
+                      <span className="text-[11px] uppercase tracking-wider font-semibold text-ink-faint">
+                        {total} questions
+                      </span>
+                    </div>
+                  </div>
+                  <QuestionList
+                    items={flatQuestions}
+                    loading={loading}
+                    sortOption={sortOption}
+                    onSortChange={setSortOption}
+                    visibleCount={visibleCount}
+                    onLoadMore={() => setVisibleCount((prev) => prev + 12)}
+                    emptyMessage="No FAQs yet."
+                  />
+                </section>
+              </div>
 
-      {/* Pencil doodle — left side */}
-      <div className="absolute top-[200px] left-[-20px] hidden lg:block" style={{ pointerEvents: 'none' }} aria-hidden="true">
-        <svg width="50" height="50" viewBox="0 0 50 50" fill="none" style={{ opacity: 0.42 }}>
-          <path d="M38 5 L12 32 L10 42 L20 40 L46 13 Z" stroke="var(--deco-stroke)" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-          <line x1="30" y1="12" x2="38" y2="20" stroke="var(--deco-stroke)" strokeWidth="1.5" strokeLinecap="round"/>
-        </svg>
-      </div>
+              {/* RIGHT — sticky sidebar */}
+              <aside className="space-y-6 lg:sticky lg:top-28 lg:self-start">
+                {/* 4×2 icon grid — Browse Categories */}
+                <div className="bg-card rounded-2xl border border-border p-5 sm:p-6 shadow-subtle">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" className="text-accent" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M3 3h7v7H3z" />
+                        <path d="M14 3h7v7h-7z" />
+                        <path d="M14 14h7v7h-7z" />
+                        <path d="M3 14h7v7H3z" />
+                      </svg>
+                      <h3 className="font-serif text-lg text-ink">Browse Categories</h3>
+                    </div>
+                  </div>
+                  <CategoryIconGrid
+                    categories={categories}
+                    grouped={grouped}
+                    onSelect={handleCategoryOpen}
+                  />
+                  {categories.length > 8 && (
+                    <button
+                      type="button"
+                      onClick={scrollToAllCategories}
+                      className="block w-full text-center mt-4 text-xs text-accent font-medium hover:underline"
+                    >
+                      Browse all {categories.length} categories →
+                    </button>
+                  )}
+                </div>
 
-      {/* Dotted curved trail — sweeps from the search area to the right */}
-      <div className="absolute top-[150px] right-[-40px] hidden lg:block" style={{ pointerEvents: 'none' }} aria-hidden="true">
-        <svg width="220" height="240" viewBox="0 0 220 240" fill="none" style={{ opacity: 0.38 }}>
-          <path d="M8 16 C70 30, 110 60, 118 100 C126 140, 110 170, 140 196 C160 214, 190 222, 212 224" stroke="var(--section-icon)" strokeWidth="1.5" strokeDasharray="2 7" fill="none" strokeLinecap="round"/>
-        </svg>
-      </div>
+                {/* Trending Issues */}
+                <TrendingIssues />
+              </aside>
+            </section>
 
-      {/* Small sparkles — right edge */}
-      <div className="absolute top-[260px] right-[-56px] hidden lg:block" style={{ pointerEvents: 'none' }} aria-hidden="true">
-        <svg width="40" height="44" viewBox="0 0 40 44" fill="none" style={{ opacity: 0.45 }}>
-          <path d="M12 2 L14 10 L22 12 L14 14 L12 22 L10 14 L2 12 L10 10 Z" stroke="var(--deco-stroke)" strokeWidth="1.5" fill="none" strokeLinejoin="round"/>
-          <path d="M30 24 L31.5 30 L37 31.5 L31.5 33 L30 39 L28.5 33 L23 31.5 L28.5 30 Z" stroke="var(--deco-stroke)" strokeWidth="1.2" fill="none" strokeLinejoin="round"/>
-        </svg>
-      </div>
+            {/* ─── BROWSE ALL CATEGORIES — full-width section ────── */}
+            <section ref={allCategoriesRef} className="mt-14 scroll-mt-32" aria-labelledby="all-categories-heading">
+              <div className="bg-card rounded-2xl border border-border p-5 sm:p-8 shadow-subtle">
+                <div className="flex items-center justify-between mb-5">
+                  <div className="flex items-center gap-2">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" className="text-accent" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M4 6h16M4 12h16M4 18h10" />
+                    </svg>
+                    <h2 id="all-categories-heading" className="font-serif text-xl text-ink">Browse all categories</h2>
+                  </div>
+                  <span className="text-[11px] uppercase tracking-wider font-semibold text-ink-faint">
+                    {categories.length} categories · {total} FAQs
+                  </span>
+                </div>
+                {categories.length === 0 ? (
+                  <p className="text-sm text-ink-soft">No categories yet.</p>
+                ) : (
+                  <ul className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-0.5">
+                    {categories.map((cat) => (
+                      <li key={cat}>
+                        <CategoryListItem
+                          name={cat}
+                          count={grouped[cat]?.length ?? 0}
+                          onSelect={() => handleCategoryOpen(cat)}
+                        />
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </section>
 
-      {/* Code / angle bracket symbol — right side */}
-      <div className="absolute top-[330px] right-[-12px] hidden lg:block" style={{ pointerEvents: 'none' }} aria-hidden="true">
-        <svg width="45" height="55" viewBox="0 0 45 55" fill="none" style={{ opacity: 0.42 }}>
-          <path d="M16 5 L6 27 L16 49" stroke="var(--deco-stroke)" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-          <path d="M29 5 L39 27 L29 49" stroke="var(--deco-stroke)" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-          <line x1="14" y1="20" x2="31" y2="20" stroke="var(--deco-stroke)" strokeWidth="1.5" strokeLinecap="round"/>
-          <line x1="14" y1="34" x2="31" y2="34" stroke="var(--deco-stroke)" strokeWidth="1.5" strokeLinecap="round"/>
-        </svg>
-      </div>
+            {/* CTA — "Still have a question?" */}
+            <CTA />
+          </>
+        )}
+      </main>
 
-      {/* Wavy squiggle — right of search */}
-      <div className="absolute top-[170px] right-[12%] hidden lg:block" style={{ pointerEvents: 'none' }} aria-hidden="true">
-        <svg width="90" height="16" viewBox="0 0 90 16" fill="none" style={{ opacity: 0.45 }}>
-          <path d="M2 8 Q12 2, 22 8 Q32 14, 42 8 Q52 2, 62 8 Q72 14, 82 8" stroke="var(--section-icon)" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
-        </svg>
-      </div>
+      <Footer />
 
-      {/* Bottom curved arrow — dashed swoop under the cards, with a leaf tip */}
-      <div className="absolute top-[700px] left-[42%] hidden lg:block" style={{ pointerEvents: 'none' }} aria-hidden="true">
-        <svg width="190" height="60" viewBox="0 0 190 60" fill="none" style={{ opacity: 0.42 }}>
-          <path d="M6 18 C30 44, 80 52, 130 44 C150 41, 164 34, 174 26" stroke="var(--deco-stroke)" strokeWidth="1.5" strokeDasharray="6 6" fill="none" strokeLinecap="round"/>
-          <path d="M166 24 L174 26 L172 34" stroke="var(--deco-stroke)" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-          <path d="M176 22 C176 16, 182 12, 188 12 C188 18, 182 22, 176 22 Z" stroke="var(--section-icon)" strokeWidth="1.5" fill="none" strokeLinejoin="round"/>
-        </svg>
-      </div>
-    </>
+      {searchActive && searchResults && searchResults.length > 0 && (
+        <SearchFeedback searchQuery={searchQuery} resultFaqId={resultFaqId} />
+      )}
+    </div>
   );
 }

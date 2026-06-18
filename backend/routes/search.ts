@@ -7,6 +7,7 @@ import {
   getTrending,
   getSuggest,
 } from '../controllers/searchController.js';
+import { programScope } from '../middleware/programScope.js';
 import {
   submitUnresolved,
   getUnresolvedSearches,
@@ -28,11 +29,11 @@ const suggestLimiter = rateLimit({
 });
 
 // ── Public search ──────────────────────────────────────────────────────────
-router.get('/trending', getTrending);
+router.get('/trending', programScope({ required: false }), getTrending);
 router.get('/suggest',  suggestLimiter, getSuggest);
 
 // ── Semantic search (public — no auth required) ─────────────────────────────
-router.post('/', semanticSearch);
+router.post('/', programScope({ required: false }), semanticSearch);
 
 // ── Unresolved feedback ─────────────────────────────────────────────────────
 // POST: capture "not resolved" search feedback (auth optional — uses token if present)

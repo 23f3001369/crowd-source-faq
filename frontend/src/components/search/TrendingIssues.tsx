@@ -2,14 +2,18 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import type { Post } from '../../types/ui';
+import { useBatch } from '../../context/BatchContext';
 
 export default function TrendingIssues() {
   const [issues, setIssues] = useState<Post[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const { currentBatch } = useBatch();
   const navigate = useNavigate();
 
   useEffect(() => {
-    api.get('/community')
+    setLoading(true);
+    const params = currentBatch?._id ? { batchId: currentBatch._id } : {};
+    api.get('/community', { params })
       .then((res) => {
         const allPosts = (res.data.posts || res.data) as Post[];
         const answered = allPosts
@@ -26,7 +30,7 @@ export default function TrendingIssues() {
       })
       .catch(() => setIssues([]))
       .finally(() => setLoading(false));
-  }, []);
+  }, [currentBatch?._id]);
 
   if (loading) {
     return (

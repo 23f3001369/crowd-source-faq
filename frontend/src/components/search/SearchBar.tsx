@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import api from '../../utils/api';
 import type { SearchResult } from '../../types/ui';
+import { useBatch } from '../../context/BatchContext';
 
 interface Suggestion {
   _id: string;
@@ -38,6 +39,8 @@ const SearchBar = React.forwardRef<HTMLInputElement, SearchBarProps>(function Se
   },
   ref
 ) {
+  const { currentBatch } = useBatch();
+  const batchId = currentBatch?._id ?? null;
   const navigate = useNavigate();
   const [internalQuery, setInternalQuery] = useState<string>('');
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
@@ -60,7 +63,10 @@ const SearchBar = React.forwardRef<HTMLInputElement, SearchBarProps>(function Se
     onLoading(true);
     onError?.(null);
     try {
-      const res = await api.post<{ results: SearchResult[] }>('/search', { query: searchQuery.trim() });
+      const res = await api.post<{ results: SearchResult[] }>('/search', {
+        query: searchQuery.trim(),
+        batchId: batchId || undefined,
+      });
       onResults(res.data.results ?? null);
     } catch (err: any) {
       if (axios.isCancel(err)) {

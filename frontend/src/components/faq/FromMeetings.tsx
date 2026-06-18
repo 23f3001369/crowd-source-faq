@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import type { RecentFAQ, ZoomPublicStats } from '../../types/ui';
+import { useBatch } from '../../context/BatchContext';
 
 /**
  * "From Zoom Meetings" — surfaces the project's actual goal on the home page.
@@ -41,16 +42,20 @@ function ArrowRightIcon() {
 }
 
 export default function FromMeetings() {
+  const { currentBatch } = useBatch();
+  const batchId = currentBatch?._id ?? null;
   const navigate = useNavigate();
   const [faqs, setFaqs] = useState<RecentFAQ[]>([]);
   const [stats, setStats] = useState<ZoomPublicStats | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (!batchId) return;
     let isMounted = true;
+    setLoading(true);
     Promise.all([
-      api.get<{ faqs: RecentFAQ[] }>('/faq/recent', { params: { source: 'zoom_transcript', limit: 6 } }),
-      api.get<ZoomPublicStats>('/zoom/public-stats'),
+      api.get<{ faqs: RecentFAQ[] }>('/faq/recent', { params: { source: 'zoom_transcript', limit: 6, batchId } }),
+      api.get<ZoomPublicStats>('/zoom/public-stats', { params: { batchId } }),
     ])
       .then(([faqsRes, statsRes]) => {
         if (!isMounted) return;
@@ -68,7 +73,7 @@ export default function FromMeetings() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [batchId]);
 
   const hasData = faqs.length > 0;
   const anyZoomActivity =

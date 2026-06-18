@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
+import { useBatch } from '../../context/BatchContext';
 
 interface SolvedPost {
   _id: string;
@@ -61,19 +62,23 @@ function CommentIcon() {
 }
 
 export default function TopSolved() {
+  const { currentBatch } = useBatch();
+  const batchId = currentBatch?._id ?? null;
   const [posts, setPosts] = useState<SolvedPost[]>([]);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
   useEffect(() => {
-    api.get('/community/solved', { params: { limit: 4 } })
+    if (!batchId) return;
+    setLoading(true);
+    api.get('/community/solved', { params: { limit: 4, batchId } })
       .then((res) => {
         const data = res.data.posts || [];
         setPosts(data);
       })
       .catch(() => setPosts([]))
       .finally(() => setLoading(false));
-  }, []);
+  }, [batchId]);
 
   if (loading) {
     return (

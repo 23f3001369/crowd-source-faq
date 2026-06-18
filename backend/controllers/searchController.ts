@@ -31,6 +31,7 @@ interface PendingLog {
   // v1.68 — M1: optional userId (anonymous searches leave it null)
   userId: Types.ObjectId | null;
   createdAt: Date;
+  batchId?: Types.ObjectId | null;
 }
 
 const BATCH_FLUSH_INTERVAL_MS = 5_000; // flush every 5 seconds
@@ -246,6 +247,7 @@ export const semanticSearch = async (req: Request, res: Response): Promise<void>
         topResultId: topResult?._id ?? null,
         topResultSource: topResult?.source ?? null,
         userId: userObjectId,
+        batchId: batchIdObjectId,
       });
       res.json({ results: cachedResults, total: cachedResults.length, cached: true });
       return;
@@ -264,6 +266,7 @@ export const semanticSearch = async (req: Request, res: Response): Promise<void>
         topResultId: topResult?._id ?? null,
         topResultSource: topResult?.source ?? null,
         userId: userObjectId,
+        batchId: batchIdObjectId,
       });
       res.json({ results: cachedResults, total: cachedResults.length, cached: true });
       return;
@@ -317,6 +320,7 @@ export const semanticSearch = async (req: Request, res: Response): Promise<void>
             topResultId: (final[0]?._id as Types.ObjectId) ?? null,
             topResultSource: 'knowledge',
             userId: userObjectId,
+            batchId: batchIdObjectId,
           });
           searchRequests.inc({ source: 'fresh', cached: 'false' });
           searchResultsReturned.observe({ source: 'fresh' }, final.length);
@@ -340,6 +344,7 @@ export const semanticSearch = async (req: Request, res: Response): Promise<void>
       topResultId: topResult?._id ?? null,
       topResultSource: topResult?.source ?? null,
       userId: userObjectId,
+      batchId: batchIdObjectId,
     });
 
     searchRequests.inc({ source: 'fresh', cached: 'false' });
@@ -356,7 +361,17 @@ export const semanticSearch = async (req: Request, res: Response): Promise<void>
 // Aggregates search logs to find the top 6 most popular queries
 export const getTrending = async (req: Request, res: Response): Promise<void> => {
   try {
-    const trending = await SearchLog.aggregate([
+    const rawBatchId = req.query.batchId || req.programContext?.batchId;
+    const batchIdObjectId = typeof rawBatchId === 'string' && Types.ObjectId.isValid(rawBatchId)
+      ? new Types.ObjectId(rawBatchId)
+      : null;
+
+    const pipeline: any[] = [];
+    if (batchIdObjectId) {
+      pipeline.push({ $match: { batchId: batchIdObjectId } });
+    }
+
+    pipeline.push(
       {
         $group: {
           _id: { $toLower: '$query' },
@@ -373,9 +388,10 @@ export const getTrending = async (req: Request, res: Response): Promise<void> =>
           count: 1,
           lastSearched: 1,
         },
-      },
-    ]);
+      }
+    );
 
+    const trending = await SearchLog.aggregate(pipeline);
     res.json({ trending });
   } catch (error) {
     res.status(500).json({ message: 'Server error', /* error: process.env.NODE_ENV === 'development' ? (error as Error).message : undefined */ });
