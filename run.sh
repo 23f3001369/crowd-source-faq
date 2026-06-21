@@ -276,7 +276,7 @@ start_frontend() {
   fi
 
   # Run vite — prefix with [frontend] dim tag, append to session log
-  pnpm run dev 2>&1 | \
+  npx pnpm@9 run dev 2>&1 | \
     sed -u "s/^\([^[]]*\)/${F_DIM}[frontend]${F_RESET} \1/" | \
     tee -a "$SESSION_LOG" &
   FRONTEND_PID=$!

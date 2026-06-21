@@ -75,7 +75,7 @@ else
 
   log "checking Node.js..."
   node --version > /dev/null || die "Node.js not found"
-  [ ! -x "$TSX" ] && die "tsx not found at $TSX — run: pnpm install"
+  [ ! -x "$TSX" ] && die "tsx not found at $TSX — run: npx pnpm@9 install"
 
   # Session log — timestamped, kept in logs/ next to run.sh
   SESSION_TIMESTAMP=$(date '+%Y-%m-%d_%H-%M-%S')
