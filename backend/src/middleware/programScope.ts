@@ -36,7 +36,7 @@ export interface ProgramEnrollmentContext {
   enrolledAt: Date;
 }
 
-declare module 'express-serve-static-core' {
+declare module 'express' {
   interface Request {
     programContext?: ProgramContext;
     programEnrollment?: ProgramEnrollmentContext;
