@@ -284,7 +284,7 @@ export const ConfigSchema = z.object({
     allowedSubfolders: z.array(z.string()).default(['avatar', 'posts']),
     maxFileSizeMb: z.number().default(8),
     signedUrlTtlSeconds: z.number().default(900),
-  }),
+  }).default({}),
   programs: z.object({
     maxBatchesPerProgram: z.number().default(50),
     maxCoursesPerBatch: z.number().default(20),
