@@ -15,7 +15,7 @@ import { ticketsCommandData, executeTickets } from './commands/tickets.js';
 import { resolveCommandData, executeResolve } from './commands/resolve.js';
 import { banCommandData, executeBan } from './commands/ban.js';
 import { broadcastCommandData, executeBroadcast } from './commands/broadcast.js';
-import { adminConfigCommandData, executeAdminConfig } from './commands/adminConfig.js';
+import { adminCommandData, executeAdmin } from './commands/admin.js';
 
 function buildCommandList(): RESTPostAPIChatInputApplicationCommandsJSONBody[] {
   return [
@@ -27,7 +27,7 @@ function buildCommandList(): RESTPostAPIChatInputApplicationCommandsJSONBody[] {
     resolveCommandData,
     banCommandData,
     broadcastCommandData,
-    adminConfigCommandData,
+    adminCommandData,
   ];
 }
 
@@ -39,13 +39,24 @@ export async function registerCommands(
   const route = config.scope === 'guild'
     ? Routes.applicationGuildCommands(config.clientId, config.guildId)
     : Routes.applicationCommands(config.clientId);
-  await rest.put(route, { body });
-  logger.info(`[bot] registered ${body.length} ${config.scope} commands`);
+
+  try {
+    logger.info(`[bot] registering ${body.length} ${config.scope} slash commands...`);
+    const result = await rest.put(route, { body });
+    logger.info(`[bot] registered ${Array.isArray(result) ? result.length : body.length} commands`);
+  } catch (err) {
+    logger.error(`[bot] command registration failed: ${(err as Error).message}`);
+    throw err;
+  }
 }
 
-// Re-export so the CLI script (scripts/registerDiscordCommands.ts)
-// and the bot have one source of truth.
-export { askCommandData, searchCommandData, statusCommandData, helpCommandData,
-         ticketsCommandData, resolveCommandData, banCommandData, broadcastCommandData, adminConfigCommandData };
-export { executeAsk, executeSearch, executeStatus, executeHelp,
-         executeTickets, executeResolve, executeBan, executeBroadcast, executeAdminConfig };
+// CLI helper: `npx tsx src/integrations/discord/registerCommands.ts global` etc.
+if (process.argv[1]?.endsWith('registerCommands.ts') || process.argv[1]?.endsWith('registerCommands.js')) {
+  const scope = (process.argv[2] as 'guild' | 'global') ?? 'guild';
+  const config = (await import('./discordBot.js')).loadBotConfig();
+  if (!config) {
+    logger.error('DISCORD_BOT_TOKEN / DISCORD_CLIENT_ID / DISCORD_GUILD_ID not set.');
+    process.exit(1);
+  }
+  await registerCommands({ ...config, scope });
+}

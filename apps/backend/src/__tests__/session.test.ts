@@ -37,7 +37,7 @@ const { mintSession, validateSession, revokeSession, revokeAllSessionsForAdmin, 
   '../integrations/discord/admin/session.js'
 );
 
-function makeFakeSessionRow(tokenPlaintext: string, overrides: Record<string, unknown> = {}): {
+type FakeSessionRow = {
   tokenHash: string;
   _id: string;
   adminId: string;
@@ -53,22 +53,27 @@ function makeFakeSessionRow(tokenPlaintext: string, overrides: Record<string, un
   lockoutUntil: Date | null;
   consecutiveFailures: number;
   save: () => Promise<unknown>;
-} {
+};
+
+function makeFakeSessionRow(tokenPlaintext: string, overrides: Record<string, unknown> = {}): FakeSessionRow {
+  // The full IAdminSession type has too many fields with strict types for
+  // a fake to satisfy naturally; we cast per-field with `as <Type>`. The
+  // test only reads back the fields it cares about.
   return {
     tokenHash: '', // populated by test setup below
-    _id: overrides._id ?? `65fe${Math.random().toString(16).slice(2, 18)}`,
-    adminId: overrides.adminId ?? 'admin001',
-    adminUsername: overrides.adminUsername ?? 'yashh',
-    source: overrides.source ?? 'rest',
-    createdAt: overrides.createdAt ?? new Date(),
-    expiresAt: overrides.expiresAt ?? new Date(Date.now() + 3600_000),
-    lastUsedAt: overrides.lastUsedAt ?? new Date(),
-    ipAddress: overrides.ipAddress ?? null,
-    userAgent: overrides.userAgent ?? null,
-    revokedAt: overrides.revokedAt ?? null,
-    revokedReason: overrides.revokedReason ?? null,
-    lockoutUntil: overrides.lockoutUntil ?? null,
-    consecutiveFailures: overrides.consecutiveFailures ?? 0,
+    _id: (overrides._id as string | undefined) ?? `65fe${Math.random().toString(16).slice(2, 18)}`,
+    adminId: (overrides.adminId as string | undefined) ?? 'admin001',
+    adminUsername: (overrides.adminUsername as string | undefined) ?? 'yashh',
+    source: (overrides.source as 'discord' | 'rest' | undefined) ?? 'rest',
+    createdAt: (overrides.createdAt as Date | undefined) ?? new Date(),
+    expiresAt: (overrides.expiresAt as Date | undefined) ?? new Date(Date.now() + 3600_000),
+    lastUsedAt: (overrides.lastUsedAt as Date | undefined) ?? new Date(),
+    ipAddress: (overrides.ipAddress as string | null | undefined) ?? null,
+    userAgent: (overrides.userAgent as string | null | undefined) ?? null,
+    revokedAt: (overrides.revokedAt as Date | null | undefined) ?? null,
+    revokedReason: (overrides.revokedReason as string | null | undefined) ?? null,
+    lockoutUntil: (overrides.lockoutUntil as Date | null | undefined) ?? null,
+    consecutiveFailures: (overrides.consecutiveFailures as number | undefined) ?? 0,
     save: vi.fn().mockResolvedValue(undefined),
   };
 }
