@@ -6,6 +6,7 @@ on:
 env:
   INFISICAL_ENVIRONMENT: prod
   INFISICAL_SECRET_PATH: /
+  INFISICAL_API_URL: https://app.infisical.com
 
 jobs:
   deploy:
@@ -29,6 +30,8 @@ jobs:
 
             echo "==> Pulling latest code..."
             git pull origin main
+
+            export INFISICAL_API_URL="${{ env.INFISICAL_API_URL }}"
 
             echo "==> Authenticating with Infisical..."
             export INFISICAL_TOKEN=$(npx @infisical/cli@0.43.40 login \
