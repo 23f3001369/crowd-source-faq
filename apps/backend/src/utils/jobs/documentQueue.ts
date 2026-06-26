@@ -41,6 +41,7 @@ import { loadConfig } from '../../config/loader.js';
 const QUEUE_NAME = 'document-processing';
 
 let useLocalFallback = false;
+let queueFailed = false;
 
 function getRedisUrl(): string {
   const config = loadConfig();
@@ -56,7 +57,7 @@ function getRedisUrl(): string {
 }
 
 export function isDocumentQueueEnabled(): boolean {
-  return true; // Always enabled (falls back to local Redis)
+  return !queueFailed;
 }
 
 /**
@@ -207,6 +208,10 @@ export function startDocumentWorker(): boolean {
         logger.warn('[documentQueue] Remote Redis connection failed. Falling back to local Redis.');
         useLocalFallback = true;
         void recreateQueueAndWorker();
+      } else {
+        logger.error('[documentQueue] Fallback local Redis also failed. Disabling document processing worker.');
+        queueFailed = true;
+        void stopDocumentWorker();
       }
     }
   });
@@ -249,6 +254,20 @@ async function recreateQueueAndWorker(): Promise<void> {
       });
       _worker.on('error', (err) => {
         logger.warn(`[documentQueue] fallback worker error: ${err.message}`);
+        const msg = err.message || '';
+        const lowerMsg = msg.toLowerCase();
+        if (
+          lowerMsg.includes('econnrefused') ||
+          lowerMsg.includes('rate limit') ||
+          lowerMsg.includes('quota') ||
+          lowerMsg.includes('forbidden') ||
+          lowerMsg.includes('limit exceeded') ||
+          lowerMsg.includes('max requests')
+        ) {
+          logger.error('[documentQueue] Fallback local Redis failed. Disabling document processing worker.');
+          queueFailed = true;
+          void stopDocumentWorker();
+        }
       });
 
       _events = new QueueEvents(QUEUE_NAME, { connection: conn });
