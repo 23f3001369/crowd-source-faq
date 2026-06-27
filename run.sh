@@ -207,6 +207,11 @@ start_backend() {
   set +a
   # Kill any existing process on port 6767 before starting
   pkill -f "tsx.*server" 2>/dev/null || true
+  local port_pid=$(lsof -t -i :6767 2>/dev/null || true)
+  if [ -n "$port_pid" ]; then
+    warn "port 6767 in use — killing process $port_pid"
+    kill -9 $port_pid 2>/dev/null || true
+  fi
   sleep 1
 
   # Session log — timestamped, previous sessions preserved

@@ -63,6 +63,9 @@ jobs:
             pnpm build
             cd ../..
 
+            echo "==> Cleaning up port 6767..."
+            kill -9 $(lsof -t -i:6767) 2>/dev/null || true
+
             echo "==> Restarting csfaq service..."
             sudo systemctl restart csfaq.service
 
