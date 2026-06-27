@@ -42,6 +42,7 @@ const QUEUE_NAME = 'document-processing';
 
 let useLocalFallback = false;
 let queueFailed = false;
+let queueDisabledByAdmin = false;
 
 // v1.71 — Warn throttle. ioredis auto-reconnects with exponential
 // backoff (~2s cap), and every reconnect attempt fires an 'error'
@@ -65,6 +66,9 @@ function shouldWarn(key: string): boolean {
 }
 
 function getRedisUrl(): string {
+  if (process.env.REDIS_DISABLED === 'true') {
+    return '';
+  }
   const config = loadConfig();
   const fallback = process.env.REDIS_LOCAL_TCP_URL || 'redis://127.0.0.1:6379';
   // v1.71 — guard against the prod-has-no-Redis-container footgun. Without
@@ -90,8 +94,26 @@ function getRedisUrl(): string {
   return url;
 }
 
+export type DocumentQueueStatus = 'online' | 'disabled' | 'failed';
+
+export function getDocumentQueueStatus(): DocumentQueueStatus {
+  if (queueFailed) return 'failed';
+  if (queueDisabledByAdmin || buildConnectionOptions() === null) return 'disabled';
+  return 'online';
+}
+
+export function setQueueDisabledByAdmin(disabled: boolean): void {
+  queueDisabledByAdmin = disabled;
+  if (disabled) {
+    void stopDocumentWorker();
+  } else {
+    queueFailed = false;
+    startDocumentWorker();
+  }
+}
+
 export function isDocumentQueueEnabled(): boolean {
-  return !queueFailed;
+  return !queueFailed && !queueDisabledByAdmin && buildConnectionOptions() !== null;
 }
 
 /**

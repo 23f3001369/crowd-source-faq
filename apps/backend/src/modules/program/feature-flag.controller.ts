@@ -30,6 +30,13 @@ export const FEATURE_FLAGS = {
       "and gate the backend endpoints.",
     defaultEnabled: false,
   },
+  documentPipeline: {
+    label: 'Document Processing Pipeline',
+    description:
+      'Enables the Redis-backed background worker (BullMQ) for document insight processing and OCR. ' +
+      'When disabled, document uploads are gated and the worker is stopped to free up resources.',
+    defaultEnabled: true,
+  },
 } as const;
 
 export type FeatureFlagKey = keyof typeof FEATURE_FLAGS;
@@ -157,6 +164,10 @@ export async function toggleFeatureFlag(req: Request, res: Response): Promise<vo
     ).lean();
     invalidateFeatureFlagCache(key);
     adminLog.info(`[featureFlags] ${key} → ${isEnabling ? 'enabled' : 'disabled'}`);
+    if (key === 'documentPipeline') {
+      const { setQueueDisabledByAdmin } = await import('../../utils/jobs/documentQueue.js');
+      setQueueDisabledByAdmin(!isEnabling);
+    }
     res.json({ flag: updated });
   } catch (err) {
     adminLog.error(`[featureFlags] toggleFeatureFlag failed: ${(err as Error).message}`);

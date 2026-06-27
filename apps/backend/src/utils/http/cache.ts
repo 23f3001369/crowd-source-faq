@@ -25,6 +25,9 @@ let redisClient: CacheClient | null = null;
 let useLocalFallback = false;
 
 function getRedis(): CacheClient | null {
+  if (process.env.REDIS_DISABLED === 'true') {
+    return null;
+  }
   if (redisClient) return redisClient;
 
   // 1. Try Upstash REST Client first if configured and fallback is not active

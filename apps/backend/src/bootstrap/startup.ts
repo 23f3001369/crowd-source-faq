@@ -124,7 +124,17 @@ export async function startup(config: any): Promise<void> {
     runOnStartup: false,
   });
 
-  const documentWorkerStarted = startDocumentWorker();
+  const { isFeatureEnabled } = await import('../modules/program/feature-flag.controller.js');
+  const pipelineEnabled = await isFeatureEnabled('documentPipeline');
+
+  let documentWorkerStarted = false;
+  if (pipelineEnabled) {
+    documentWorkerStarted = startDocumentWorker();
+  } else {
+    const { setQueueDisabledByAdmin } = await import('../utils/jobs/documentQueue.js');
+    setQueueDisabledByAdmin(true);
+  }
+
   if (documentWorkerStarted) {
     cronManager.register({
       name: 'document-promotion',
@@ -134,7 +144,7 @@ export async function startup(config: any): Promise<void> {
     });
     logger.info(`[server] document pipeline online (worker + auto-promote every ${config.documents.autoPromote.intervalMs / 1000}s)`);
   } else {
-    logger.info('[server] document pipeline offline — set REDIS_TCP_URL to enable');
+    logger.info('[server] document pipeline offline (disabled by feature flag or not configured)');
   }
 
   // Start cron manager

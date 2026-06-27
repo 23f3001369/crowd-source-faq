@@ -80,6 +80,9 @@ export const getStats = async (req: Request, res: Response): Promise<void> => {
           ? '100'
           : '0';
 
+    const { getDocumentQueueStatus } = await import('../../utils/jobs/documentQueue.js');
+    const documentQueueStatus = getDocumentQueueStatus();
+
     res.json({
       totalFaqs,
       pendingFaqs,
@@ -92,6 +95,7 @@ export const getStats = async (req: Request, res: Response): Promise<void> => {
       topCategory: topCategoryResult[0]?._id || 'N/A',
       newUsersThisWeek: usersThisWeek,
       trends: { faqs: parseFloat(faqTrend) },
+      documentQueueStatus,
     });
   } catch (error) {
     res.status(500).json({ message: 'Server error', /* error: process.env.NODE_ENV === 'development' ? (error as Error).message : undefined */ });

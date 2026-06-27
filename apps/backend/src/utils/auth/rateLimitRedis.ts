@@ -46,6 +46,9 @@ function buildLocalClient(): IORedis {
 }
 
 function buildRedisClient(): IORedis | null {
+  if (process.env.REDIS_DISABLED === 'true') {
+    return null;
+  }
   const url = loadConfig().redis.tcpUrl;
   // v1.71 — same prod-no-local-Redis guard as cache.ts / documentQueue.ts.
   // Without this, prod login/register would stall on ioredis connect
