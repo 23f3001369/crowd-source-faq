@@ -70,25 +70,22 @@ jobs:
             sudo systemctl reload nginx
 
             echo "==> Debugging VPS service state..."
-            echo "1. Directory permissions:"
-            ls -la . || true
-            ls -la logs || true
-
-            echo "2. Waiting 20 seconds for compilation/startup to complete..."
+            echo "==> Waiting 20 seconds for compilation/startup to complete..."
             sleep 20
 
-            echo "3. Checking if port 6767 is active:"
+            echo "1. Checking if port 6767 is active:"
             ss -lptn 'sport = :6767' 2>/dev/null || netstat -lptn 2>/dev/null | grep 6767 || echo "❌ No process listening on 6767"
 
-            echo "4. Listing running node/tsx processes:"
+            echo "2. Listing running node/tsx processes:"
             ps aux | grep -E "node|tsx" | grep -v grep || echo "❌ No active Node processes found"
 
-            echo "5. Dumping latest session log:"
+            echo "3. Dumping latest session log:"
             LATEST_LOG=$(ls -t logs/session_*.txt 2>/dev/null | head -n 1 || true)
             if [ -n "$LATEST_LOG" ] && [ -f "$LATEST_LOG" ]; then
               echo "   Latest log file: $LATEST_LOG"
-              echo "   Log content:"
+              echo "   --- LOG CONTENT START ---"
               cat "$LATEST_LOG" || true
+              echo "   --- LOG CONTENT END ---"
             else
               echo "⚠️  No session log files found!"
             fi
