@@ -60,11 +60,12 @@ export function validateEnv(): void {
   const redisUrl = process.env.REDIS_URL;
   if (isValidConfigValue(redisUrl)) {
     if (!/^https?:\/\/.+/.test(redisUrl)) {
-      errors.push('REDIS_URL must be a valid URL');
-    }
-    const redisToken = process.env.REDIS_TOKEN;
-    if (!isValidConfigValue(redisToken)) {
-      errors.push('REDIS_TOKEN is required when REDIS_URL is provided');
+      logger.warn('[validateEnv] REDIS_URL is not a valid HTTP/HTTPS URL. Redis-backed rate limiting will fall back to in-memory.');
+    } else {
+      const redisToken = process.env.REDIS_TOKEN;
+      if (!isValidConfigValue(redisToken)) {
+        logger.warn('[validateEnv] REDIS_TOKEN is missing. Redis-backed rate limiting will fall back to in-memory.');
+      }
     }
   }
 
