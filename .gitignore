@@ -18,6 +18,8 @@ apps/backend/.env.development
 apps/backend/.env.production
 apps/backend/.env.test
 apps/backend/.env.*.local
+apps/backend/.new.env
+
 
 # Frontend
 apps/frontend/.env

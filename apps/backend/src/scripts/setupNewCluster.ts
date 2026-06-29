@@ -284,6 +284,10 @@ async function main(): Promise<void> {
             numDimensions: embeddingDim,
             similarity: 'dotProduct',
           },
+          {
+            type: 'filter',
+            path: 'batchId',
+          },
         ],
       },
     };

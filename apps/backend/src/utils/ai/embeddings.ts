@@ -40,11 +40,16 @@ async function callCustomEmbedding(text: string, apiKey: string, model: string, 
   const client = new OpenAI({
     apiKey: apiKey || 'ollama',
     baseURL: baseURL.replace(/\/$/, ''),
+    timeout: 300000,
   });
+
+  // Truncate the input to a safe character limit (~2000 characters)
+  // to avoid 'input length exceeds context length' errors on BERT models (max 512 tokens).
+  const safeInput = text.length > 2000 ? text.slice(0, 2000) : text;
 
   const response = await client.embeddings.create({
     model,
-    input: text,
+    input: safeInput,
   });
   
   const vec = response.data[0]?.embedding;

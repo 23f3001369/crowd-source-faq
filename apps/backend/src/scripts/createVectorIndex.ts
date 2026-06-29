@@ -43,11 +43,10 @@ if (!MONGO_URI) {
   process.exit(1);
 }
 
-const DB_NAME = 'yaksha_faq';
 const SHOULD_DROP = process.argv.includes('--drop');
 
 async function createIndexes() {
-  await mongoose.connect(MONGO_URI, { dbName: DB_NAME });
+  await mongoose.connect(MONGO_URI);
   const db = mongoose.connection.db!;
 
   const faqCollection = db.collection('yaksha_faq_faqs');
@@ -83,6 +82,10 @@ async function createIndexes() {
           path: 'embedding',
           numDimensions: activeDimensions,
           similarity: 'dotProduct',
+        },
+        {
+          type: 'filter',
+          path: 'batchId',
         },
       ],
     },
