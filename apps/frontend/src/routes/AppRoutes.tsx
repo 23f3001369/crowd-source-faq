@@ -95,7 +95,9 @@ export default function AppRoutes() {
     );
   }
 
-  const showAskAI = !location.pathname.startsWith('/admin');
+  // Chatbot temporarily disabled from the frontend. To re-enable, restore:
+  // const showAskAI = !location.pathname.startsWith('/admin');
+  const showAskAI = false;
 
   return (
     <>
