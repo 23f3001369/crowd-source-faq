@@ -430,7 +430,7 @@ export default function AuthModal() {
               placeholder="••••••••"
               disabled={loading}
             />
-            <p className="text-[10px] text-ink-faint -mt-2">Minimum 6 characters</p>
+            <p className="text-[10px] text-ink-faint -mt-2">At least 8 characters, including a letter and a number</p>
             <Input
               id="modal-register-confirm"
               name="confirmPassword"
