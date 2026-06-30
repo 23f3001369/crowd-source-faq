@@ -1,7 +1,9 @@
-import React from 'react';
+import React, { useEffect } from 'react';
+import api from '../../utils/api';
 import { FAQItem, getQuestionTitle, getAnswerText, formatDate, getCategoryIcon, formatCategoryName, TrustBadge } from './faqUtils';
 import ReportFAQButton from './ReportFAQButton';
 import FreshnessBadge from '../faq/FreshnessBadge';
+import { useBatch } from '../../context/BatchContext';
 
 interface QuestionDetailProps {
   item: FAQItem;
@@ -11,7 +13,29 @@ interface QuestionDetailProps {
   backLabel?: string;
 }
 
+function getOrCreateSessionId(): string {
+  let sid = sessionStorage.getItem('yaksha_faq_session');
+  if (!sid || sid.length < 4) {
+    sid = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    sessionStorage.setItem('yaksha_faq_session', sid);
+  }
+  return sid;
+}
+
 export default function QuestionDetail({ item, relatedItems, onBack, onSelectRelated, backLabel }: QuestionDetailProps) {
+  const { currentBatch } = useBatch();
+  const batchId = currentBatch?._id ?? null;
+
+  // v1.72 — fire-and-forget track-view so Popular FAQs ranking actually works.
+  // Backend deduplicates within VIEW_DEDUP_WINDOW_MS (30 min) per (guestId, faqId)
+  // so back/forward navigation won't inflate counts. batchId is required by the
+  // backend (400 if missing); silently skip if no program is selected.
+  useEffect(() => {
+    if (!item?._id || !batchId) return;
+    const sessionId = getOrCreateSessionId();
+    api.post('/public/track-view', { faqId: item._id, sessionId, batchId }).catch(() => {});
+  }, [item?._id, batchId]);
+
   const title = getQuestionTitle(item);
   const prefix = item.questionNumber ? `${item.questionNumber}. ` : '';
   const answer = getAnswerText(item);
