@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import api from '../../utils/api';
 import { FAQItem, getQuestionTitle, getAnswerText, formatDate, getCategoryIcon, formatCategoryName, TrustBadge } from './faqUtils';
 import ReportFAQButton from './ReportFAQButton';
-import FreshnessBadge from '../faq/FreshnessBadge';
+import FreshnessBadge from './FreshnessBadge';
 import { useBatch } from '../../context/BatchContext';
 
 interface QuestionDetailProps {
