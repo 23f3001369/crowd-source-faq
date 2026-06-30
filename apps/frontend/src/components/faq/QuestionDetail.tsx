@@ -14,34 +14,34 @@ interface QuestionDetailProps {
 }
 
 function getOrCreateSessionId(): string {
-  let sid = sessionStorage.getItem('yaksha_faq_session');
-  if (!sid || sid.length < 4) {
-    sid = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-    sessionStorage.setItem('yaksha_faq_session', sid);
-  }
+  const stored = sessionStorage.getItem('yaksha_faq_session');
+  if (stored && stored.length >= 4) return stored;
+  const sid = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  sessionStorage.setItem('yaksha_faq_session', sid);
   return sid;
 }
 
 export default function QuestionDetail({ item, relatedItems, onBack, onSelectRelated, backLabel }: QuestionDetailProps) {
   const { currentBatch } = useBatch();
-  const batchId = currentBatch?._id ?? null;
+  const batchId: string | null = currentBatch?._id ?? null;
 
   // v1.72 — fire-and-forget track-view so Popular FAQs ranking actually works.
   // Backend deduplicates within VIEW_DEDUP_WINDOW_MS (30 min) per (guestId, faqId)
   // so back/forward navigation won't inflate counts. batchId is required by the
   // backend (400 if missing); silently skip if no program is selected.
   useEffect(() => {
-    if (!item?._id || !batchId) return;
-    const sessionId = getOrCreateSessionId();
-    api.post('/public/track-view', { faqId: item._id, sessionId, batchId }).catch(() => {});
-  }, [item?._id, batchId]);
+    if (!item._id || !batchId) return;
+    const faqId: string = item._id;
+    const sessionId: string = getOrCreateSessionId();
+    api.post('/public/track-view', { faqId, sessionId, batchId }).catch(() => {});
+  }, [item._id, batchId]);
 
   const title = getQuestionTitle(item);
   const prefix = item.questionNumber ? `${item.questionNumber}. ` : '';
   const answer = getAnswerText(item);
-  const metaDate = formatDate(item?.updatedAt || item?.createdAt);
-  const sourceLabel = item?.source ? (item.source === 'faq' ? 'FAQ' : 'Community') : '';
-  const trustLevel = item?.trustLevel;
+  const metaDate = formatDate(item.updatedAt || item.createdAt);
+  const sourceLabel = item.source === 'faq' ? 'FAQ' : item.source === 'community' ? 'Community' : '';
+  const trustLevel = item.trustLevel;
   const highlight = answer ? answer.split('. ').slice(0, 1).join('. ') : '';
 
   return (
@@ -51,9 +51,9 @@ export default function QuestionDetail({ item, relatedItems, onBack, onSelectRel
           <p className="text-xs font-semibold text-ink-faint uppercase tracking-wide">Category</p>
           <div className="mt-3 flex items-center gap-2 text-sm text-ink">
             <span className="w-8 h-8 rounded-xl bg-mist flex items-center justify-center text-ink-faint">
-              {getCategoryIcon(item?.category || '')}
+              {getCategoryIcon(item.category || '')}
             </span>
-            <span>{item?.categoryNumber ? `${item.categoryNumber}. ` : ''}{formatCategoryName(item?.category || 'General')}</span>
+            <span>{item.categoryNumber ? `${item.categoryNumber}. ` : ''}{formatCategoryName(item.category || 'General')}</span>
           </div>
         </div>
 
@@ -96,7 +96,7 @@ export default function QuestionDetail({ item, relatedItems, onBack, onSelectRel
           {metaDate && (
             <span className="text-[11px] text-ink-faint">Updated {metaDate}</span>
           )}
-          {item?.source === 'faq' && (
+          {item.source === 'faq' && (
             <FreshnessBadge
               reviewStatus={item.reviewStatus}
               lastVerifiedDate={item.lastVerifiedDate}
