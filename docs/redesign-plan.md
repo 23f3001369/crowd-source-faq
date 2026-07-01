@@ -368,21 +368,50 @@ Then Phase 2 builds the context retriever against the new query layer.
 
 ---
 
-## 6. Open questions for the user
+## 6. Decisions (user-confirmed)
 
-1. **Redis?** `cache.ts` says "the application has no Redis dependency post-migration" but `rateLimitRedis.ts` exists, `@upstash/redis` is in deps, `bullmq` is in deps. Audit found `rateLimitRedis.ts:14-21` returns `undefined` always → silently fail-open to in-memory Map. **Decision needed:** (a) keep Redis for rate limits only (Upstash works multi-instance), (b) drop all Redis and use in-memory (loses multi-instance rate-limit correctness), or (c) replace with Keyv + SQLite for persistent in-process rate limits.
+| # | Decision |
+|---|---|
+| 1 | **No Redis.** Drop `@upstash/redis`, `rate-limit-redis`, `bullmq`. Replace queue with Mongo-backed (agenda or custom). Rate limit stays in-memory (single-instance is acceptable). |
+| 2 | **No embeddings.** No vector index. Pure MongoDB `$text` indexes for retrieval. Auto-answer uses LLM for *generation* (still needed) but retrieval is text-only. |
+| 3 | **ChatGPT-style auto-answer.** Context = doc insights + Zoom transcripts + FAQs + rolling context (comments, recent activity, user history). Program-scoped. Ask human when unsure. Admin answer becomes program knowledge. |
+| 4 | **Admin flag UI** ships in Phase 1. |
+| 5 | **No vector index** (consistent with #2). |
+| 6 | **Hybrid design-system.** ShadCN for primitives (Button, Input, Card, Dialog, Select). In-house for product-specific (CTA, PageDoodles, TimelineCardHeader). Convention locked BEFORE next `shadcn add`. |
+| 7 | **Selective TanStack Query** — search, community feed, auto-answer queue only. |
 
-2. **Embedding model?** Audit found `EMBEDDING_DIM = 1024` (mxbai-embed-large) hardcoded. **Decision needed:** stay on mixedbread, or move to OpenAI text-embedding-3-small (cheaper, 1536-dim)? Either way, migration script for `embeddingVersion` field on every doc.
+### Implications
 
-3. **Phase ordering.** The plan above goes Phase 0 → 1 → 1.5 → 2 → 3 → 4. **Decision needed:** do you want to skip Phase 0/1 and go straight to Phase 2+3 (the new feature) and let the architectural cleanup ride along later? Or stick to the sequenced plan?
+- **Phase 1 adds**: dependency removal (`@upstash/redis`, `rate-limit-redis`, `bullmq`), queue replacement, rate-limit fail-closed comment, feature flag UI.
+- **Phase 2 redesigns** the context retriever as text-only with no vector similarity. Atlas `$text` indexes already exist on FAQ (`faq.model.ts:306-309`); add them to `TranscriptKnowledge`, `DocumentInsight`, `CommunityPost`, and `Comment`.
+- **Auto-answer pipeline** still uses an LLM to *generate* the answer from the assembled context — just no vector similarity in retrieval. Same ChatGPT-style "compose context, ask the model" pattern.
+- **ProgramKnowledge** stores text (not embedding). Re-queryable by text index on `(question + answer + keywords)`.
 
-4. **Admin UI scope for the flag registry (R1).** New `/admin/feature-flags` page needed. **Decision needed:** build it as part of Phase 1, or stub it (env-var + DB only) and add the UI in Phase 4?
+### Future-friendly: embeddings as a pluggable retrieval source
 
-5. **Vector index on `ProgramKnowledge`.** Atlas has 1024-dim limit per index. If we add `ProgramKnowledge` with vector index, that's a third 1024-dim index in the cluster. **Decision needed:** OK to add, or move to a dedicated vector DB as part of this work?
+The user wants embeddings support kept pluggable for later. **Phase 2 architecture** accommodates this without committing to embedding work now:
 
-6. **Design-system ownership (R9).** In-house / ShadCN / hybrid? Recommend hybrid. **Decision needed:** lock this in BEFORE the next `shadcn add` to avoid the macOS case-insensitive file collision risk.
+- `services/contextRetriever.ts` exposes a **`RetrievalSource` interface**: `{ name: string; search(query, batchId, opts): Promise<RankedHit[]> }`.
+- Default implementations shipped in Phase 2: `FaqTextSource`, `KbTextSource` (Zoom + DocumentInsight), `CommunityTextSource`, `CommentsSource`, `RecentActivitySource`. Each uses MongoDB `$text` indexes.
+- **The interface is intentionally identical to what an embeddings source would look like.** When embeddings come back later:
+  - Add `embedding?: number[]` (optional) to `ProgramKnowledge`, `FAQ`, `TranscriptKnowledge`, `DocumentInsight`, `CommunityPost`.
+  - Create an Atlas vector index per collection (kept in code, deferred).
+  - Add `VectorRetrievalSource` implementing the same interface, optionally weighted higher in `RetrievalRegistry`.
+- The pipeline never has to change shape. Adding a new retrieval source is a single file + a single line in config.
+- `ProgramKnowledge` schema keeps `embedding: [Number]` (optional) so documents created without embeddings don't error when retrieval tries to call a vector source — the source just returns empty for those rows.
 
-7. **TanStack Query migration scope (R10).** Big lift — every page reinvents data fetching today. **Decision needed:** full migration, or selective (just the auto-answer queue + search/community in Phase 1.5)?
+This is the "room for embeddings" the user asked for. Today it costs nothing (no vector index, no embedding model calls); tomorrow it's a config flip.
+
+---
+
+## 6a. Open questions (refined after user decisions)
+
+Now that the user committed on 7 of the 9, the remaining open questions are smaller:
+
+1. **Job queue choice** — `agenda` (Mongo-backed, mature, npm-installable) vs custom Mongo collection + cron-driven `findOneAndUpdate` lock? Recommend `agenda` for traction. **Decision needed.**
+2. **Hybrid convention enforcement** — rename `Button.tsx` → `Button/index.tsx`, **OR** keep PascalCase in-house and use `button.tsx` (kebab) ShadCN? Either way document in `docs/design-system.md`. **Decision needed before any `shadcn add`.**
+3. **LLM provider priority** — with no embeddings, the provider priority (Anthropic > OpenAI > xAI > MiniMax) is now only about generation cost/latency. Anthropic Claude 4 Sonnet is best for long-context answer generation. **Confirm or change.**
+4. **Admin login UX** — current admin auth-failure redirects to `/?next=/admin`. Frontend audit flagged this as inconsistent with user flow. Fix in Phase 1.5? **Decision needed.**
 
 ---
 
