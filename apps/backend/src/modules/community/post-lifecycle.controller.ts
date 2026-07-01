@@ -44,8 +44,36 @@ export const resolvePost = async (req: Request, res: Response): Promise<void> =>
     }
     if (assertSameProgram(post, req.programContext, res)) return;
 
+    const expertRoles = ['moderator', 'admin', 'expert'];
+    const isExpertResolver = req.user?.role !== undefined && expertRoles.includes(req.user.role);
+
+    // v1.68 — H3 fix: was in-memory mutate + save(). Atomic
+    // findOneAndUpdate with $set replaces the field changes.
+    // v1.68.1 — H3 regression: status / answer were mutated in-memory
+    // but $set omitted them, so /resolve persisted only escalation
+    // fields and the answer silently dropped. Include status + answer
+    // in the atomic update so the official answer actually saves.
+    await CommunityPost.findOneAndUpdate(
+      { _id: post._id },
+      {
+        $set: {
+          status: 'answered',
+          answer: sanitizeHtml(answer.trim()),
+          escalationStatus: 'none',
+          escalatedAt: null,
+          escalationReason: null,
+          escalatedBy: null,
+          ...(isExpertResolver ? { answerIsExpert: true } : {}),
+        },
+      },
+    );
+
+    // Refresh local post state for downstream checks (promotion,
+    // notification bodies) so they reflect what was just persisted.
     post.status = 'answered';
     post.answer = sanitizeHtml(answer.trim());
+    if (isExpertResolver) post.answerIsExpert = true;
+
     // Lifecycle: transition to 'answered' stage
     if (post.lifecycle?.status === 'open') {
       (post.lifecycle.statusHistory ??= []).push({
@@ -57,22 +85,6 @@ export const resolvePost = async (req: Request, res: Response): Promise<void> =>
       });
       post.lifecycle.status = 'answered';
     }
-    // v1.68 — H3 fix: was in-memory mutate + save(). Atomic
-    // findOneAndUpdate with $set replaces the field changes.
-    const expertRoles = ['moderator', 'admin', 'expert'];
-    const isExpertResolver = req.user?.role !== undefined && expertRoles.includes(req.user.role);
-    await CommunityPost.findOneAndUpdate(
-      { _id: post._id },
-      {
-        $set: {
-          escalationStatus: 'none',
-          escalatedAt: null,
-          escalationReason: null,
-          escalatedBy: null,
-          ...(isExpertResolver ? { answerIsExpert: true } : {}),
-        },
-      },
-    );
 
     // Invalidate search cache so resolved answer reflects immediately
     await invalidateCache().catch((err) => {
