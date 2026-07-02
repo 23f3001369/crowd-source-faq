@@ -475,6 +475,18 @@ export const updateFAQ = async (req: Request<{ id: string }>, res: Response): Pr
   }
 };
 
+// GET /api/faq/categories — list distinct categories for approved FAQs
+// Audit fix (2026-07-02): frontend called `/faq/faq-categories` which
+// didn't exist; this is the canonical route + handler.
+export const getFAQCategories = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const cats = await FAQ.distinct('category', { status: 'approved' });
+    res.json(cats.filter((c) => typeof c === 'string' && c.length > 0).sort());
+  } catch (err) {
+    res.status(500).json({ message: 'categories fetch failed' });
+  }
+};
+
 // DELETE /api/faq/:id — Delete an FAQ (Admin/Moderator only)
 export const deleteFAQ = async (req: Request<{ id: string }>, res: Response): Promise<void> => {
   try {
@@ -500,10 +512,13 @@ export const deleteFAQ = async (req: Request<{ id: string }>, res: Response): Pr
 // Used by the community board to prevent duplicate questions
 export const checkFAQMatch = async (req: Request<Record<string, never>, Record<string, never>, CheckFAQMatchBody>, res: Response): Promise<void> => {
   try {
-    const { query } = req.body;
+    // Audit fix (2026-07-02): accept either `query` (spec) OR `question` /
+    // `body` (what the frontend actually sends) so the route doesn't 500.
+    const body = req.body as { query?: string; question?: string; body?: string };
+    const query = (body.query || body.question || body.body || '').trim();
 
-    if (!query || !query.trim()) {
-      res.status(400).json({ message: 'query string is required.' });
+    if (!query) {
+      res.status(400).json({ message: 'query (or question) is required.' });
       return;
     }
 

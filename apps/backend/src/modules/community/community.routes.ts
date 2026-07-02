@@ -62,6 +62,9 @@ router.get('/review-queue', protect, authorize('admin', 'moderator'), getReviewQ
 router.get('/bookmarks', protect, getBookmarks);
 
 router.get('/', getAllPosts);
+// Audit fix: frontend calls `/community/posts` (literal); without this
+// entry, Express falls through to `/:id` and tries ObjectId('posts') → 500.
+router.get('/posts', getAllPosts);
 router.get('/:id', getPostById);
 router.get('/:id/related', getRelatedForPost);
 

@@ -326,3 +326,21 @@ export async function deleteBatch(req: Request, res: Response): Promise<void> {
     res.status(500).json({ message: 'Failed to delete batch.' });
   }
 }
+
+// GET /api/batches/active — the "current" batch the portal should default to.
+// Audit fix (2026-07-02): frontend called `/batches/active`; the route
+// was shadowed by `/:id` which ObjectId-cast-failed on the literal
+// "active" string. Now exposed as a real endpoint.
+export const getActiveBatch = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const batch = await Batch.findOne({ isDefault: true }).lean();
+    if (!batch) {
+      res.status(404).json({ message: 'no default batch' });
+      return;
+    }
+    res.json(batch);
+  } catch (err) {
+    httpLog.warn(`[batch] getActiveBatch failed: ${(err as Error).message}`);
+    res.status(500).json({ message: 'fetch failed' });
+  }
+};
