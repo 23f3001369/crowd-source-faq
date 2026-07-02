@@ -7,6 +7,7 @@ import adminRoutes from '../modules/admin/admin.routes.js';
 import adminAuditRoutes from '../modules/admin/admin-audit.routes.js';
 import adminAutoAnswerRoutes from '../modules/admin/admin-auto-answer.routes.js';
 import adminWebPagesRoutes from '../modules/admin/admin-web-pages.routes.js';
+import adminDocumentsRoutes from '../modules/admin/admin-documents.routes.js';
 import analyticsRoutes from '../modules/search/analytics.routes.js';
 import notificationRoutes from '../modules/notification/notification.routes.js';
 import teaRoutes from '../modules/notification/tea.routes.js';
@@ -50,6 +51,7 @@ export function registerRoutes(app: Express): void {
   router.use('/admin', adminRoutes);
   router.use('/admin', adminAutoAnswerRoutes);
   router.use('/admin', adminWebPagesRoutes);
+  router.use('/admin', adminDocumentsRoutes);
   router.use('/admin', adminAuditRoutes);
   router.use('/reputation', reputationRoutes);
   router.use('/moderation', moderationRoutes);
