@@ -3,6 +3,7 @@ import api from '../../utils/api';
 import { FAQItem, getQuestionTitle, getAnswerText, formatDate, getCategoryIcon, formatCategoryName, TrustBadge } from './faqUtils';
 import ReportFAQButton from './ReportFAQButton';
 import FreshnessBadge from './FreshnessBadge';
+import RelatedFaqs from './RelatedFaqs';
 import { useBatch } from '../../context/BatchContext';
 
 interface QuestionDetailProps {
@@ -12,6 +13,17 @@ interface QuestionDetailProps {
   onSelectRelated: (item: FAQItem) => void;
   backLabel?: string;
 }
+
+const STOPWORDS = new Set([
+  'this','that','these','those','with','from','have','has','had','been',
+  'being','will','would','could','should','their','there','where','when',
+  'what','which','your','also','more','some','into','out','about','than',
+  'then','only','other','some','such','very','just','like','over','after',
+  'before','between','under','above','through','during','each','every',
+  'both','most','once','here','where','while','same','than','been','being',
+  'does','doing','done','make','made','take','took','give','gave','find',
+  'know','think','seem','feel','become','keep','let','put','call','used',
+]);
 
 function getOrCreateSessionId(): string {
   const stored = sessionStorage.getItem('yaksha_faq_session');
@@ -143,6 +155,13 @@ export default function QuestionDetail({ item, relatedItems, onBack, onSelectRel
             </div>
           </div>
         )}
+
+        {/* Related FAQs — "People Also Ask" */}
+        <RelatedFaqs
+          currentFaqId={item._id}
+          currentCategory={item.category || ''}
+          keywords={answer ? answer.toLowerCase().match(/\b[a-z]{4,}\b/g)?.filter(w => !STOPWORDS.has(w)) ?? [] : []}
+        />
 
         {/* Report FAQ */}
         <ReportFAQButton item={item} />
