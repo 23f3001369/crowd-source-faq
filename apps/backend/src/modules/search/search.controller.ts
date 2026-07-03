@@ -292,7 +292,7 @@ export const semanticSearch = async (req: Request, res: Response): Promise<void>
     //   } catch (embErr) {
     //     httpLog.warn('search.embedding.failed — falling back to keyword-only search', { error: embErr.message });
     //   }
-    let embedding: number[] | null = null;
+    const embedding: number[] | null = null;
 
     // 3. Execute Vector (when an embedding is available) + Text searches in
     //    parallel across both collections for maximum speed.
