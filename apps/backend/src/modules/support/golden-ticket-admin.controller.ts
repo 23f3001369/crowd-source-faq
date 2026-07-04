@@ -402,7 +402,7 @@ export async function resolveGoldenTicket(req: Request, res: Response): Promise<
       await notifyUser(request.userId, {
         title: 'Your Golden ticket was resolved',
         message: `An admin resolved your Golden ticket and posted an answer.`,
-        link: '/support/' + request._id.toString(),
+        link: '/golden/ticket/' + request._id.toString(),
         metadata: {
           supportRequestId: request._id.toString(),
           isGolden: true,
@@ -416,7 +416,7 @@ export async function resolveGoldenTicket(req: Request, res: Response): Promise<
       await notifyUser(request.userId, {
         title: 'Your Golden ticket was resolved',
         message: `An admin resolved your Golden ticket. Premium support complete.`,
-        link: '/support/' + request._id.toString(),
+        link: '/golden/ticket/' + request._id.toString(),
         metadata: {
           supportRequestId: request._id.toString(),
           status: 'Resolved',
@@ -543,7 +543,7 @@ export async function rejectGoldenTicket(req: Request, res: Response): Promise<v
         penalty > 0
           ? `An admin rejected your Golden ticket. A penalty of ${penalty} SP was applied.`
           : `An admin rejected your Golden ticket.`,
-      link: '/support/' + request._id.toString(),
+      link: '/golden/ticket/' + request._id.toString(),
       metadata: {
         supportRequestId: request._id.toString(),
         status: 'Rejected',
@@ -672,7 +672,7 @@ export async function banAndRejectGoldenTicket(req: Request, res: Response): Pro
     await notifyUser(request.userId, {
       title: 'Your Golden ticket was rejected — 72h restriction applied',
       message: `An admin rejected your Golden ticket and applied a 72-hour content-creation restriction (until ${newExpiry.toISOString()}). You can still browse the platform.`,
-      link: '/support/' + request._id.toString(),
+      link: '/golden/ticket/' + request._id.toString(),
       metadata: {
         supportRequestId: request._id.toString(),
         status: 'Rejected',
@@ -776,7 +776,7 @@ export async function reResolveGoldenTicket(req: Request, res: Response): Promis
     await notifyUser(request.userId, {
       title: 'New answer on your Golden ticket',
       message: `An admin posted another answer on your Golden ticket.`,
-      link: '/support/' + request._id.toString(),
+      link: '/golden/ticket/' + request._id.toString(),
       metadata: {
         supportRequestId: request._id.toString(),
         isGolden: true,

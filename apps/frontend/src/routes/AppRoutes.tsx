@@ -37,6 +37,7 @@ const SupportIndexPage = lazy(() => import('../pages/SupportIndexPage'));
 const NewSupportRequestPage = lazy(() => import('../pages/NewSupportRequestPage'));
 const SupportTicketPage = lazy(() => import('../pages/SupportTicketPage'));
 const GoldenTicketPage = lazy(() => import('../pages/GoldenTicketPage'));
+const GoldenTicketDetailPage = lazy(() => import('../pages/GoldenTicketDetailPage'));
 const WelcomePackagePage = lazy(() => import('../pages/WelcomePackagePage'));
 const ProgramPortalPage = lazy(() => import('../pages/ProgramPortalPage'));
 const ProgramPage = lazy(() => import('../pages/ProgramPage'));
@@ -68,6 +69,7 @@ const AdminSupportGuidance = lazy(() => import('../admin/pages/AdminSupportGuida
 const AdminSupportAnalytics = lazy(() => import('../admin/pages/AdminSupportAnalytics'));
 const AdminSupportCategories = lazy(() => import('../admin/pages/AdminSupportCategories'));
 const AdminGoldenTickets = lazy(() => import('../admin/pages/AdminGoldenTickets'));
+const AdminGoldenLogs = lazy(() => import('../admin/pages/AdminGoldenLogs'));
 const AdminFeatures = lazy(() => import('../admin/pages/AdminFeatures'));
 const AdminSchedule = lazy(() => import('../admin/pages/AdminSchedule'));
 const AdminWelcomePage = lazy(() => import('../admin/pages/AdminWelcomePage'));
@@ -94,6 +96,19 @@ function GoldenRoute() {
   return (
     <FeatureGate featureKey="goldenTicket" featureLabel="Golden Ticket">
       <GoldenTicketPage />
+    </FeatureGate>
+  );
+}
+
+// v1.73 — dedicated user thread for a single Golden ticket. The
+// in-app bell notification (from /admin/golden-tickets/:id/resolve
+// + re-resolve + reject + ban) deep-links here so the user can
+// actually read the admin answer — the generic /support/:id page
+// does NOT render goldenResolutions[].
+function GoldenTicketDetailRoute() {
+  return (
+    <FeatureGate featureKey="goldenTicket" featureLabel="Golden Ticket">
+      <GoldenTicketDetailPage />
     </FeatureGate>
   );
 }
@@ -139,6 +154,7 @@ export default function AppRoutes() {
             <Route path="/support/new" element={<RouteElement name="support-new"><SupportNewRoute /></RouteElement>} />
             <Route path="/support/:id" element={<RouteElement name="support-:id"><SupportTicketRoute /></RouteElement>} />
             <Route path="/golden" element={<RouteElement name="golden"><GoldenRoute /></RouteElement>} />
+            <Route path="/golden/ticket/:id" element={<RouteElement name="golden-ticket-:id"><GoldenTicketDetailRoute /></RouteElement>} />
             <Route path="/program/:slug" element={<RouteElement name="program-:slug"><ProgramPage /></RouteElement>} />
             <Route
               path="/account"
@@ -194,6 +210,14 @@ export default function AppRoutes() {
           </Route>
           <Route path="/admin/golden-tickets" element={<RouteElement name="admin-golden-tickets"><AdminRoute><AdminLayout><FeatureGate featureKey="goldenTicket" featureLabel="Golden Tickets"><AdminSupportLayout /></FeatureGate></AdminLayout></AdminRoute></RouteElement>}>
             <Route index element={<AdminGoldenTickets />} />
+          </Route>
+          {/* v1.73 — The AdminGoldenLogs page has been sitting
+              built-but-unwired since v1.71. Wrap it in the same
+              AdminSupportLayout so the "Golden Queue / Golden Logs"
+              tab bar at the top lights up correctly. Falls under
+              the goldenTicket feature flag like its sibling. */}
+          <Route path="/admin/golden-logs" element={<RouteElement name="admin-golden-logs"><AdminRoute><AdminLayout><FeatureGate featureKey="goldenTicket" featureLabel="Golden Logs"><AdminSupportLayout /></FeatureGate></AdminLayout></AdminRoute></RouteElement>}>
+            <Route index element={<AdminGoldenLogs />} />
           </Route>
           <Route path="/admin/features" element={<RouteElement name="admin-features"><AdminRoute><AdminLayout><AdminFeatures /></AdminLayout></AdminRoute></RouteElement>} />
           <Route path="/admin/schedule" element={<RouteElement name="admin-schedule"><AdminRoute><AdminLayout><AdminSchedule /></AdminLayout></AdminRoute></RouteElement>} />

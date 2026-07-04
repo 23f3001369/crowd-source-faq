@@ -29,6 +29,14 @@ const mocks = vi.hoisted(() => {
     state,
     spendSpy: vi.fn(async () => undefined),
     findByIdMock: vi.fn(async () => state.capturedDoc),
+    // v1.73 — capture the payload of every notifyUser() call so the
+    // test can assert the deep-link target.
+    notifyCalls: [] as Array<{
+      userId: unknown;
+      link: string;
+      title: string;
+      metadata: Record<string, unknown>;
+    }>,
   };
 });
 
@@ -55,7 +63,20 @@ vi.mock('../modules/support/support-core.controller.js', () => ({
   getAuthedUserRole: (): string => 'admin',
   stripAdminOnlyFields: (obj: unknown): unknown => obj,
   logAdminAction: async (): Promise<void> => undefined,
-  notifyUser: async (..._args: unknown[]): Promise<void> => undefined,
+  // v1.73 — capture each call so the test can assert the
+  // /golden/ticket/<id> deep link. The promise still resolves with
+  // undefined so callers don't see a difference.
+  notifyUser: async (
+    userId: unknown,
+    payload: { link: string; title: string; metadata: Record<string, unknown> },
+  ): Promise<void> => {
+    mocks.notifyCalls.push({
+      userId,
+      link: payload.link,
+      title: payload.title,
+      metadata: payload.metadata,
+    });
+  },
   isGoldenTicket: (req: { isGolden?: boolean }): boolean => Boolean(req.isGolden),
 }));
 
@@ -136,6 +157,7 @@ describe('resolveGoldenTicket (modal-first, v1.71)', () => {
   beforeEach(() => {
     mocks.spendSpy.mockClear();
     mocks.findByIdMock.mockReset();
+    mocks.notifyCalls.length = 0;
   });
 
   it('captures the admin answer as the first goldenResolutions entry', async () => {
@@ -198,5 +220,32 @@ describe('resolveGoldenTicket (modal-first, v1.71)', () => {
     // Idempotent path should NOT append to resolutions — that would
     // be a duplicate answer. Admins must use /re-resolve for that.
     expect(mocks.state.capturedDoc.goldenResolutions).toHaveLength(0);
+  });
+
+  // v1.73 — The in-app bell notification must deep-link to the
+  // dedicated Golden ticket thread page so the user actually sees
+  // the admin answer (the generic /support/:id page does NOT render
+  // goldenResolutions[]). Regression guard: any future PR that
+  // flips the link back to /support/<id> fails here.
+  it('posts the in-app bell with link /golden/ticket/<id> (with-answer path)', async () => {
+    const req = makeReq({
+      body: { text: 'Try a different network.' },
+    });
+    const res = makeRes();
+    await resolveGoldenTicket(req, res);
+    expect(mocks.notifyCalls.length).toBe(1);
+    expect(mocks.notifyCalls[0].link).toBe(
+      '/golden/ticket/' + mocks.state.capturedDoc._id.toString()
+    );
+  });
+
+  it('posts the in-app bell with link /golden/ticket/<id> (no-answer path)', async () => {
+    const req = makeReq({ body: {} });
+    const res = makeRes();
+    await resolveGoldenTicket(req, res);
+    expect(mocks.notifyCalls.length).toBe(1);
+    expect(mocks.notifyCalls[0].link).toBe(
+      '/golden/ticket/' + mocks.state.capturedDoc._id.toString()
+    );
   });
 });

@@ -38,6 +38,14 @@ const mocks = vi.hoisted(() => {
     state,
     spendSpy: vi.fn(async () => undefined),
     findByIdMock: vi.fn(async () => state.capturedDoc),
+    // v1.73 — capture every notifyUser() call so the test can assert
+    // the /golden/ticket/<id> deep link.
+    notifyCalls: [] as Array<{
+      userId: unknown;
+      link: string;
+      title: string;
+      metadata: Record<string, unknown>;
+    }>,
   };
 });
 
@@ -65,13 +73,24 @@ vi.mock('../modules/program/promotion.service.js', () => ({
 
 // logAdminAction + notifyUser are fire-and-forget side effects; mock
 // them so the test doesn't try to touch real Notification / AdminLog
-// collections.
+// collections. v1.73 — notifyUser captures its payload so the test
+// can assert the /golden/ticket/<id> deep link.
 vi.mock('../modules/support/support-core.controller.js', () => ({
   getAuthedUserId: (): Types.ObjectId => new Types.ObjectId('0000000000000000000000aa'),
   getAuthedUserRole: (): string => 'admin',
   stripAdminOnlyFields: (obj: unknown): unknown => obj,
   logAdminAction: async (): Promise<void> => undefined,
-  notifyUser: async (): Promise<void> => undefined,
+  notifyUser: async (
+    userId: unknown,
+    payload: { link: string; title: string; metadata: Record<string, unknown> },
+  ): Promise<void> => {
+    mocks.notifyCalls.push({
+      userId,
+      link: payload.link,
+      title: payload.title,
+      metadata: payload.metadata,
+    });
+  },
   isGoldenTicket: (req: { isGolden?: boolean }): boolean => Boolean(req.isGolden),
 }));
 
@@ -147,6 +166,7 @@ describe('reResolveGoldenTicket', () => {
   beforeEach(() => {
     mocks.spendSpy.mockClear();
     mocks.findByIdMock.mockReset();
+    mocks.notifyCalls.length = 0;
   });
 
   it('appends an entry to goldenResolutions when ticket is Resolved', async () => {
@@ -248,5 +268,18 @@ describe('reResolveGoldenTicket', () => {
     expect(mocks.state.capturedDoc.goldenResolutions).toHaveLength(2);
     expect(mocks.state.capturedDoc.goldenResolutions[0].text).toBe('first follow-up');
     expect(mocks.state.capturedDoc.goldenResolutions[1].text).toBe('second follow-up');
+  });
+
+  // v1.73 — The re-resolve bell must also deep-link to the dedicated
+  // Golden ticket thread page so the user can read the new follow-up
+  // answer. Regression guard.
+  it('posts the in-app bell with link /golden/ticket/<id>', async () => {
+    const req = makeReq({ body: { text: 'one more attempt' } });
+    const res = makeRes();
+    await reResolveGoldenTicket(req, res);
+    expect(mocks.notifyCalls.length).toBe(1);
+    expect(mocks.notifyCalls[0].link).toBe(
+      '/golden/ticket/' + mocks.state.capturedDoc._id.toString()
+    );
   });
 });

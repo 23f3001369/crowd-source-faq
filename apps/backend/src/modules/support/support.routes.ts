@@ -26,6 +26,8 @@ import {
   awardSpurtiPointsAdmin,
   getMySpurtiPoints,
   getGoldenQueue,
+  getMyGoldenHistory,
+  getMyGoldenTicket,
 } from './support-golden.controller.js';
 import { createIdentityLimiter } from '../../utils/auth/rateLimit.js';
 
@@ -89,6 +91,17 @@ router.delete('/requests/:id', selfDeleteSupportRequest);
 // inspect and convert tickets even when the user flow is off, same
 // as the category-CRUD pattern.
 router.get('/golden/queue',                       getGoldenQueue);
+// v1.73 — User Golden Ticket history (caller's own past tickets,
+// active ban window, activity log). Used by the History segment
+// rendered directly below the live Escalation Queue on /golden.
+router.get('/golden/history',                     getMyGoldenHistory);
+// v1.73 — User Golden Ticket thread (single ticket owned by the
+// caller). The in-app bell notification deep-links here when an
+// admin resolves a Golden ticket so the user can actually see the
+// admin answer — the generic /support/:id page does not render
+// goldenResolutions[]. MUST come AFTER /golden/queue + /golden/history
+// in this file so Express doesn't match 'queue' / 'history' as :id.
+router.get('/golden/:id',                         getMyGoldenTicket);
 
 // ─── Golden Ticket (v1.65, additive) ─────────────────────────────────────
 // Admin actions: convert existing ticket to Golden (debits SP if a
