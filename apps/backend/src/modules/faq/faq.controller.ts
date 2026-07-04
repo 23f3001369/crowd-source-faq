@@ -14,7 +14,7 @@ import { sanitizeHtml } from '../../utils/http/sanitize.js';
 import Batch from '../program/batch.model.js';
 import { invalidatePublicCaches } from './public-faq.controller.js';
 import { readSetting } from '../program/app-setting.model.js';
-import { dispatchNotification } from '../../utils/http/notificationDispatcher.js';
+import { notifyFaqBookmarkers } from './faqBookmarkNotifier.js';
 // v1.69 — Phase 3a: every public read in this file funnels its
 // Mongoose filter through withProgramScope. Single tenant callers
 // (no batchId) keep working until the rollout flips required=true.
@@ -443,20 +443,21 @@ export const updateFAQ = async (req: Request<{ id: string }>, res: Response): Pr
 
     await faq.save();
 
-    // v1.72 — Notify all users who bookmarked this FAQ
-    if (question || answer || category || status === 'approved') {
-      const bookmarkers = await User.find({ faqBookmarks: faq._id }).select('_id').lean();
-      const notifyPromises = bookmarkers.map(({ _id }) =>
-        dispatchNotification({
-          recipientId: _id as Types.ObjectId,
-          eventType: 'faq_updated',
-          link: `/faq/${faq._id}`,
-          title: 'FAQ Updated',
-        }).catch((err: unknown) => {
-          adminLog.warn(`[updateFAQ] failed to notify bookmarker ${_id}: ${(err as Error).message}`);
-        }),
-      );
-      await Promise.all(notifyPromises);
+    // v1.72 — Notify bookmarked users when the FAQ content actually changed.
+    //
+    // Only fire when one of {question, answer, category} changed in value AND a
+    // request field was provided — guards against no-op re-saves spamming
+    // every bookmarker (B2). Status→approved is a content materialisation,
+    // not a content edit, so it intentionally does NOT notify.
+    const contentChanged =
+      (question !== undefined && faq.isModified('question')) ||
+      (answer   !== undefined && faq.isModified('answer'))   ||
+      (category !== undefined && faq.isModified('category'));
+    if (contentChanged) {
+      // Background fan-out — does not block the response.
+      notifyFaqBookmarkers({ faqId: faq._id }).catch((err: unknown) => {
+        adminLog.warn(`[updateFAQ] fan-out kickoff failed: ${(err as Error).message}`);
+      });
     }
 
     // Invalidate search cache so updated FAQ reflects immediately

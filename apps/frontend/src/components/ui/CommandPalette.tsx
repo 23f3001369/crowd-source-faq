@@ -103,15 +103,27 @@ export default function CommandPalette() {
     finally { setLoading(false); }
   }, [batchId]);
 
-  // Focus input on open
+  // Focus input on open + lock body scroll so the page underneath doesn't
+  // scroll on mobile while the modal is up. Restore on close/unmount.
   useEffect(() => {
-    if (open) {
-      setQuery('');
-      setFaqResults([]);
-      setFilteredPages([]);
-      setSelectedIndex(0);
-      setTimeout(() => inputRef.current?.focus(), 50);
-    }
+    if (!open) return;
+    setQuery('');
+    setFaqResults([]);
+    setFilteredPages([]);
+    setSelectedIndex(0);
+    setTimeout(() => inputRef.current?.focus(), 50);
+
+    const prevOverflow = document.body.style.overflow;
+    const prevPaddingRight = document.body.style.paddingRight;
+    // Compensate for the missing scrollbar so the page doesn't reflow.
+    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+    document.body.style.overflow = 'hidden';
+    if (scrollbarWidth > 0) document.body.style.paddingRight = `${scrollbarWidth}px`;
+
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      document.body.style.paddingRight = prevPaddingRight;
+    };
   }, [open]);
 
   // Query → debounced search
