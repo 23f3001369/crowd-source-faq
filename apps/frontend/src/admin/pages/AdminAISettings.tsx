@@ -105,6 +105,16 @@ export default function AdminAISettings() {
   const [searchParams, setSearchParams] = useSearchParams();
   const activeBatchId = searchParams.get('batchId');
   const { availableBatches, currentBatch: activeProgram } = useBatch();
+  // v1.71 — derive the displayed program name from the URL-selected
+  // activeBatchId (not from BatchContext), so the "Saving as per-program
+  // override for X" label always matches the scope button that's actually
+  // selected. Without this, BatchContext.currentBatch could be a stale
+  // value (e.g. user picked a different scope in another tab) and the
+  // label would mislead.
+  const selectedBatch = activeBatchId
+    ? availableBatches.find((b) => b._id === activeBatchId)
+    : undefined;
+  const displayedBatchName = selectedBatch?.name ?? activeProgram?.name;
 
   const [config, setConfig] = useState<AiConfig | null>(null);
   const [hasOverride, setHasOverride] = useState(true);
@@ -378,9 +388,9 @@ export default function AdminAISettings() {
             ✓ Per-program override active
           </span>
         )}
-        {activeProgram && activeBatchId && (
+        {displayedBatchName && activeBatchId && (
           <span className="text-[10px] text-ink-faint ml-auto">
-            Saving as per-program override for <span className="font-semibold text-ink">{activeProgram.name}</span>
+            Saving as per-program override for <span className="font-semibold text-ink">{displayedBatchName}</span>
           </span>
         )}
       </div>
@@ -694,6 +704,10 @@ export default function AdminAISettings() {
           <div className="divide-y divide-border">
             {(Object.keys(FEATURE_LABELS) as Array<keyof typeof FEATURE_LABELS>).map((feature) => {
               const f = features[feature];
+              // Defensive: if a feature key is missing from the API
+              // response (stale DB doc, partial update, etc.), skip the
+              // row instead of crashing the whole page.
+              if (!f) return null;
               return (
                 <div key={feature} className="p-5 space-y-3">
                   <div className="flex items-center justify-between">

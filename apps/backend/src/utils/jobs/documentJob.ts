@@ -64,6 +64,7 @@ export async function processDocument(data: DocumentJobData): Promise<DocumentJo
   if (insights.length > 0) {
     const rows = insights.map((i) => ({
       documentId: record._id,
+      batchId: record.batchId,
       type: i.type,
       question: i.question ?? '',
       answer_or_content: i.answer_or_content,

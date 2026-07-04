@@ -270,6 +270,7 @@ async function applyFinding(faq: { _id: Types.ObjectId }, finding: AuditFinding)
     pipeline:    'faq_audit',
     targetModel: 'FAQ',
     targetId:    finding.faqId,
+    batchId:     (faq as unknown as { batchId?: mongoose.Types.ObjectId }).batchId,
     targetTitle: (faq as unknown as { question?: string }).question ?? 'Unknown FAQ',
     score:       finding.score,
     verdict:     finding.verdict,

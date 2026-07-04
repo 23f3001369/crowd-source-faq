@@ -27,6 +27,8 @@
  *      just no Discord ping.
  */
 
+import * as Sentry from '@sentry/node';
+
 type LogLevel = 'info' | 'warn' | 'error' | 'alert';
 
 interface LogInput {
@@ -162,6 +164,23 @@ function emit(entry: LogInput): void {
   // Forward alerts, errors, and warnings to Discord (best-effort, fire-and-forget).
   if (entry.level === 'alert' || entry.level === 'error' || entry.level === 'warn') {
     notifyDiscord(entry.message, entry.meta, entry.category, entry.level).catch(() => { /* swallow */ });
+  }
+  // Forward errors and alerts to Sentry (info-level logs are too noisy for the
+  // error stream). `error` calls become captureException; `alert` and `audit`
+  // become captureMessage at 'error' severity so they show up in the Issues
+  // feed tagged with the subsystem category. Safe to call when Sentry is
+  // disabled — the SDK no-ops in that case.
+  if (entry.level === 'error') {
+    // Reconstruct an Error so Sentry gets a real stack trace in the dashboard.
+    const err = new Error(entry.message);
+    if (entry.meta) err.stack = `${err.stack}\n${JSON.stringify(entry.meta, null, 2)}`;
+    Sentry.captureException(err);
+  } else if (entry.level === 'alert') {
+    Sentry.captureMessage(entry.message, {
+      level: 'error',
+      tags: { loggerCategory: entry.category },
+      extra: entry.meta as Record<string, unknown>,
+    });
   }
 }
 

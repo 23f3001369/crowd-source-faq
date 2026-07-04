@@ -101,7 +101,13 @@ export default function FaqReview() {
     try {
       await adminApi.post('/admin/community-promotions/ai-review-batch');
       await loadQueue(page);
-    } catch (e) { console.warn(friendlyError(e, 'Batch review failed.')); }
+    } catch (e) {
+      // H43 mirror — log the raw error so devs can debug; the user-facing
+      // toast/banner above already shows what happened. Do NOT pipe
+      // friendlyError() into console.* (it returns UI copy, not debug info).
+      console.error('Batch review failed:', e);
+      setLoadError(friendlyError(e, 'Batch review failed.'));
+    }
     finally { setAiBatchLoading(false); }
   }
 
@@ -120,7 +126,10 @@ export default function FaqReview() {
         }
       }
       await loadQueue(page);
-    } catch (e) { console.warn(friendlyError(e, 'Approve failed.')); }
+    } catch (e) {
+      console.error('Approve failed:', e);
+      setLoadError(friendlyError(e, 'Approve failed.'));
+    }
     finally { setActioning(null); }
   }
 
@@ -135,7 +144,10 @@ export default function FaqReview() {
       setObjectModal(null);
       setObjectReason('');
       await loadQueue(page);
-    } catch (e) { console.warn(friendlyError(e, 'Reject failed.')); }
+    } catch (e) {
+      console.error('Reject failed:', e);
+      setLoadError(friendlyError(e, 'Reject failed.'));
+    }
     finally { setActioning(null); }
   }
 
@@ -147,7 +159,10 @@ export default function FaqReview() {
         tags: item.aiGeneratedFaq?.tags ?? item.tags,
       });
       await loadQueue(page);
-    } catch (e) { console.warn(friendlyError(e, 'Merge failed.')); }
+    } catch (e) {
+      console.error('Merge failed:', e);
+      setLoadError(friendlyError(e, 'Merge failed.'));
+    }
     finally { setActioning(null); setMergeTarget(''); }
   }
 
@@ -164,7 +179,10 @@ export default function FaqReview() {
       setViewItem(null);
       setEditData(null);
       await loadQueue(page);
-    } catch (e) { console.warn(friendlyError(e, 'Edit save failed.')); }
+    } catch (e) {
+      console.error('Edit save failed:', e);
+      setLoadError(friendlyError(e, 'Edit save failed.'));
+    }
     finally { setActioning(null); }
   }
 

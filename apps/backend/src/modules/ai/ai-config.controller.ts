@@ -86,12 +86,23 @@ export const getAiConfig = async (req: Request, res: Response): Promise<void> =>
     }
 
     const activeProvider = await detectActiveProvider();
+    // When a batchId is supplied but no per-program override exists,
+    // we still return the GLOBAL config so the admin UI can render
+    // the current feature toggles. hasOverride:false tells the UI
+    // that the next save will create a new override doc.
+    let view: Record<string, unknown>;
+    if (config) {
+      view = config.publicView();
+    } else if (batchIdObjectId) {
+      const global = await AiConfig.findOne({ batchId: null, isActive: true });
+      view = global ? global.publicView() : { providers: {}, features: {} };
+    } else {
+      view = { providers: {}, features: {} };
+    }
     res.json({
-      ...(config ? config.publicView() : { providers: {}, features: {} }),
+      ...view,
       activeProvider,
-      // The shape the admin UI needs to render the 'no per-program
-      // override' state.
-      ...(batchIdObjectId && !config ? { hasOverride: false, batchId: batchIdObjectId } : { hasOverride: !!config }),
+      ...(batchIdObjectId ? { hasOverride: !!config, batchId: batchIdObjectId } : { hasOverride: !!config }),
     });
   } catch (error) {
     res.status(500).json({ message: 'Server error' });

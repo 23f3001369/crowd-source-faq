@@ -295,7 +295,7 @@ function CommentItem({ comment, post, currentUserId, userRole, onUpdate }: {
       `/community/${post._id}/comments/${comment._id}/downvote`
     );
     if (res.data.deleted) {
-      try { new Audio('/fahhhhh.mp3').play(); } catch (_) {}
+      try { new Audio('/fahhhhh.mp3').play(); } catch (_) { void 0 }
       onUpdate((post.comments as Comment[]).filter(c => c._id !== comment._id));
       return;
     }
@@ -347,10 +347,10 @@ function CommentItem({ comment, post, currentUserId, userRole, onUpdate }: {
 
   const handleAccept = async () => {
     try {
-      const res = await api.patch<{ post: Post }>(
+      const res = await api.patch<{ post: Post; comments?: unknown[] }>(
         `/community/${post._id}/comments/${comment._id}/accept-answer`
       );
-      onUpdate((res.data as any).comments || []);
+      onUpdate((res.data.comments || []) as unknown as import('../../types/ui').Comment[]);
     } catch (e) {
       const msg = friendlyError(e, 'Failed to accept answer.');
       setActionError(msg);
@@ -414,7 +414,7 @@ function CommentItem({ comment, post, currentUserId, userRole, onUpdate }: {
                 {comment.verified ? 'Unverify' : '✅ Verify'}
               </button>
             )}
-            {!post.answer && isPostAuthor && (
+            {!post.answer && (isPostAuthor || userRole === 'admin' || userRole === 'moderator') && (
               <button onClick={handleAccept}
                 className="text-[10px] text-ink-faint hover:text-success transition-colors flex items-center gap-0.5">
                 <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
@@ -671,6 +671,17 @@ export default function PostDetailDialog({ post: initialPost, onClose, currentUs
             <div className="min-w-0">
               <h2 id="post-dialog-title" className="text-base font-semibold text-ink leading-snug">{post.title}</h2>
               <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                {(() => {
+                  const programName = typeof post.batchId === 'object' && post.batchId !== null && 'name' in post.batchId
+                    ? (post.batchId as { name: string }).name
+                    : null;
+                  if (!programName) return null;
+                  return (
+                    <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-accent/10 border border-accent/25 text-[9px] font-bold text-accent uppercase tracking-wider">
+                      {programName}
+                    </span>
+                  );
+                })()}
                 <Badge variant={isAnswered ? 'success' : 'warning'}>{isAnswered ? '✓ Answered' : '○ Open'}</Badge>
                 <span className="text-xs text-ink-soft">by {post.author?.name || 'Student'}</span>
                 <span className="text-xs text-ink-faint">·</span>

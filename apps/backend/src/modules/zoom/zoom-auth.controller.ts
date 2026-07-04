@@ -47,12 +47,18 @@ export async function connectZoom(req: Request, res: Response): Promise<void> {
   // code for tokens.
   const rawBatch = req.query.batchId;
   const batchId = typeof rawBatch === 'string' && rawBatch.length > 0 ? rawBatch : null;
-  const authUrl = await buildZoomAuthUrl(userId, {
-    headers: req.headers as Record<string, string | string[] | undefined>,
-    protocol: req.protocol,
-  });
-  adminLog.info(`[Zoom OAuth] User ${userId} initiated Zoom connect for batch ${batchId ?? 'global'}`);
-  res.json({ authUrl, batchId });
+  try {
+    const authUrl = await buildZoomAuthUrl(userId, {
+      headers: req.headers as Record<string, string | string[] | undefined>,
+      protocol: req.protocol,
+    });
+    adminLog.info(`[Zoom OAuth] User ${userId} initiated Zoom connect for batch ${batchId ?? 'global'}`);
+    res.json({ authUrl, batchId });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Zoom connect failed';
+    adminLog.warn(`[Zoom OAuth] connect failed for user ${userId}: ${msg}`);
+    res.status(500).json({ message: 'zoom connect failed', error: msg });
+  }
 }
 
 // ─── Callback ────────────────────────────────────────────────────────────────

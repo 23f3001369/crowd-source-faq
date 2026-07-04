@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import api, { friendlyError } from '../../utils/api';
+import api from '../../utils/api';
 import { useAuth } from '../../hooks/useAuth';
 
 type TeaEventType = 'faq_published' | 'post_answered' | 'post_deleted' | 'post_answered_user';
@@ -88,7 +88,7 @@ export default function SpillTheTea() {
       setHasMore(res.data.hasMore);
       setPage(pageNum);
     } catch (e) {
-      console.error(friendlyError(e, 'Failed to load notifications.'));
+      console.error('Failed to load notifications:', e);
     } finally {
       setLoading(false);
     }
@@ -101,7 +101,6 @@ export default function SpillTheTea() {
     fetchTea(1, true).then(() => {
       // lastSeenIdRef is set inside fetchTea after this resolves
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   useEffect(() => {
@@ -139,7 +138,7 @@ export default function SpillTheTea() {
       await api.patch('/notifications/tea/read-all');
       setDrops((prev) => prev.map((d) => ({ ...d, read: true })));
       setUnread(0);
-    } catch (e) { console.error(friendlyError(e, 'Failed to mark notifications read.')); }
+    } catch (e) { console.error('Failed to mark notifications read:', e); }
   };
 
   const handleMarkOneRead = async (id: string) => {
@@ -147,7 +146,7 @@ export default function SpillTheTea() {
       await api.patch(`/notifications/tea/${id}/read`);
       setDrops((prev) => prev.map((d) => (d._id === id ? { ...d, read: true } : d)));
       setUnread((u) => Math.max(0, u - 1));
-    } catch (e) { console.error(friendlyError(e, 'Failed to mark notification read.')); }
+    } catch (e) { console.error('Failed to mark notification read:', e); }
   };
 
   const handleDropClick = (drop: TeaDrop) => {

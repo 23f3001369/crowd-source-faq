@@ -79,6 +79,8 @@ export interface IZoomInsight extends Document {
   sourceTitle?: string;
   /** Short excerpt from the transcript this was derived from */
   transcript_snippet?: string;
+  /** v1.69 — Program this insight belongs to. */
+  batchId?: Types.ObjectId | null;
 
   createdAt: Date;
   updatedAt: Date;
@@ -136,6 +138,12 @@ const zoomInsightSchema = new MongooseSchema<IZoomInsight>(
       type: MongooseSchema.Types.ObjectId,
       ref: 'ZoomMeeting',
       required: true,
+    },
+    batchId: {
+      type: MongooseSchema.Types.ObjectId,
+      ref: 'Batch',
+      default: null,
+      index: true,
     },
     type: {
       type: String,

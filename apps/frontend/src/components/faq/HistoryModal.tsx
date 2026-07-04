@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useBodyScrollLock } from '../../hooks/useBodyScrollLock';
-import api, { friendlyError } from '../../utils/api';
+import api from '../../utils/api';
 
 interface HistoryModalProps {
   faqId: string;
@@ -30,7 +30,7 @@ export default function HistoryModal({ faqId, faqQuestion, onClose }: HistoryMod
         if (isMounted) setLogs(res.data.logs || []);
       })
       .catch((err) => {
-        console.error(friendlyError(err, 'Failed to load history.'));
+        console.error('Failed to load history:', err);
       })
       .finally(() => {
         if (isMounted) setLoading(false);

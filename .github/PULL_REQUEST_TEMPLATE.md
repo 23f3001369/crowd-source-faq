@@ -26,10 +26,12 @@ Refs #ISSUE-NUMBER (if partial)
 - [ ] Auth / middleware
 - [ ] Docs
 
-## Checklist
+## CI verification
 
-- [ ] `cd backend && npx tsc --noEmit` — clean
-- [ ] `cd frontend && npx tsc --noEmit` — clean
+- [ ] `pnpm typecheck` — 5/5 packages pass
+- [ ] `pnpm test:run` — all tests pass
+- [ ] GitHub Actions green on the merge commit (CI, CodeQL, Build & Deploy, Pages)
+- [ ] Tested with a real cURL (or browser) hit if API behavior changed
 - [ ] Tests pass (`npm test` in affected package)
 - [ ] Single logical change — unrelated fixes noted in description, not fixed here
 - [ ] Docs updated if route / API / env var / pipeline behaviour changed

@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getAllFAQs, getFAQById, getRecentFAQs, createFAQ, updateFAQ, deleteFAQ, checkFAQMatch, getPaginatedFAQs, submitFeedback, reportFAQ, getFAQHistory, createFAQSuggestion } from './faq.controller.js';
+import { getAllFAQs, getFAQById, getRecentFAQs, createFAQ, updateFAQ, deleteFAQ, checkFAQMatch, getPaginatedFAQs, submitFeedback, reportFAQ, getFAQHistory, createFAQSuggestion, getFAQCategories } from './faq.controller.js';
 import { getFaqBookmarks, toggleFaqBookmark } from './faqBookmark.controller.js';
 import { flagFAQ, voteReview } from './freshness.controller.js';
 import { protect, authorize } from '../../middleware/auth.js';
@@ -16,6 +16,10 @@ router.get('/paginated', getPaginatedFAQs);
 // GET /api/faq/recent — Recent approved FAQs (public, used by HomePage)
 // MUST be registered before /:id route so Express doesn't treat "recent" as an id
 router.get('/recent', getRecentFAQs);
+
+// GET /api/faq/categories — list distinct categories for approved FAQs
+// Audit fix (2026-07-02): added so `/csfaq/api/faq/categories` returns 200.
+router.get('/categories', getFAQCategories);
 
 // POST /api/faq/check-match — Check if a question already exists in the FAQ (before posting on community)
 router.post('/check-match', protect, checkFAQMatch);

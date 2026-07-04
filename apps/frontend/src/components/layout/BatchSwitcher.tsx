@@ -86,7 +86,7 @@ export function BatchSwitcher({
   };
 
   return (
-    <div ref={containerRef} className={`relative ${className}`}>
+    <div data-tour="program-selector" ref={containerRef} className={`relative ${className}`}>
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}

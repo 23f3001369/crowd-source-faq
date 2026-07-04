@@ -82,11 +82,15 @@ export const searchCommunityPosts = async (req: Request, res: Response): Promise
   try {
     const q = String(req.query.q || '').trim();
 
-    const batchIdParam = (req.query.batchId as string | undefined) ?? null;
+    const rawBatchId = req.query.batchId;
+    const batchIdParam = rawBatchId === 'all'
+      ? null
+      : (rawBatchId as string | undefined || req.programContext?.batchId?.toString() || null);
     if (!q) {
       const posts = await CommunityPost.find(withProgramScope({}, batchIdParam))
         .select('-embedding')
         .populate('author', 'name')
+        .populate('batchId', 'name')
         .populate('comments.author', 'name')
         .sort({ createdAt: -1 })
         .limit(30);
@@ -95,10 +99,26 @@ export const searchCommunityPosts = async (req: Request, res: Response): Promise
       return;
     }
 
-    const embedding = await generateQueryEmbedding(q);
+    // v1.71 — Phase 8 R3: do NOT block the community search on the
+    // embedder. Previously every `/api/community/search?q=...` call
+    // hit `generateQueryEmbedding`, which produced repeated connection
+    // errors when the embedder endpoint was unreachable. Now we
+    // attempt the embed in a try/catch; if it fails we degrade to
+    // text-only matching (the text index + RRF still return useful
+    // results). The hourly `embedding-warm` cron back-fills any
+    // missing knowledge-base embeddings in the background.
+    let embedding: number[] | null = null;
+    try {
+      embedding = await generateQueryEmbedding(q);
+    } catch (embErr) {
+      communityLog.warn(
+        `[communitySearch] Failed to generate embedding for query '${q}': ${(embErr as Error).message}. Falling back to text-only search.`,
+      );
+      embedding = null;
+    }
 
     const [vectorResults, textResults] = await Promise.all([
-      runVectorSearch(embedding, 10),
+      embedding ? runVectorSearch(embedding, 10) : Promise.resolve([] as SearchResultItem[]),
       runTextSearch(q, 10),
     ]);
 
@@ -111,6 +131,7 @@ export const searchCommunityPosts = async (req: Request, res: Response): Promise
     const hydrated = await CommunityPost.find(withProgramScope({ _id: { $in: ids } }, batchIdParam))
       .select('-embedding')
       .populate('author', 'name')
+      .populate('batchId', 'name')
       .populate('comments.author', 'name');
 
     const hydratedMap = new Map(hydrated.map((doc) => [doc._id.toString(), doc]));

@@ -119,15 +119,18 @@ function AdminTicketInner(): React.ReactElement {
   // (they used to have to drop into the inbox and run a separate
   // convert action). Cost defaults to 0 — admin can leave the
   // box empty for a free promotion or type a value to debit SP.
-  async function handleConvertToGolden(): Promise<void> {
-    if (!request) return;
-    const raw = window.prompt('Convert to Golden Ticket. SP cost to charge the user (0 = no charge):', '0');
-    if (raw === null) return; // cancelled
-    const spCost = Math.max(0, Math.trunc(Number(raw) || 0));
-    const note = window.prompt('Optional internal note for the audit trail:', 'Promoted to Golden from ticket page') || '';
+  // 2-step UI: 1) trigger shows a number input for SP cost, 2) after
+  // confirming that, an optional note field shows. Then submit.
+  const [spCost, setSpCost] = useState<number | null>(null);
+  const [note, setNote] = useState('');
+
+  async function doConvert(): Promise<void> {
+    if (!request || spCost === null) return;
     setConvertSending(true);
     try {
-      await adminApi.post(`/csfaq/api/support/requests/${request._id}/convert-to-golden`, { spCost, note });
+      await adminApi.post(`/csfaq/api/support/requests/${request._id}/convert-to-golden`, { spCost, note: note.trim() });
+      setSpCost(null);
+      setNote('');
       await load();
       showToast(`Promoted to Golden${spCost > 0 ? ` (${spCost} SP charged)` : ' (no charge)'}.`);
     } catch (err) {
@@ -185,9 +188,9 @@ function AdminTicketInner(): React.ReactElement {
                 the inbox and use a separate convert action — they
                 can promote from the page they're already triaging.
                 Hidden when the ticket is already Golden (no-op). */}
-            {!request.isGolden && (
+            {!request.isGolden && spCost === null && (
               <button
-                onClick={handleConvertToGolden}
+                onClick={() => setSpCost(0)}
                 disabled={convertSending}
                 className="admin-btn-secondary inline-flex items-center gap-1.5"
                 title="Promote this ticket to Golden priority"
@@ -195,8 +198,47 @@ function AdminTicketInner(): React.ReactElement {
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                   <path d="M12 2 L13.5 10.5 L22 12 L13.5 13.5 L12 22 L10.5 13.5 L2 12 L10.5 10.5 Z" />
                 </svg>
-                {convertSending ? 'Converting…' : 'Convert to Golden'}
+                Convert to Golden
               </button>
+            )}
+            {!request.isGolden && spCost !== null && (
+              <div className="flex flex-col gap-2 p-2 border border-admin-border rounded-md bg-admin-surface">
+                <span className="text-xs font-medium text-ink-soft">
+                  Optional internal note for the audit trail:
+                </span>
+                <input
+                  autoFocus
+                  type="text"
+                  placeholder="Promoted to Golden from ticket page"
+                  defaultValue="Promoted to Golden from ticket page"
+                  onChange={(e) => setNote(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void doConvert();
+                    else if (e.key === 'Escape') {
+                      setSpCost(null);
+                      setNote('');
+                    }
+                  }}
+                  className="w-full px-2 py-1 text-xs border border-admin-border rounded bg-white text-ink placeholder-ink-soft focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+                <div className="flex gap-2 justify-end">
+                  <button
+                    type="button"
+                    className="admin-btn admin-btn-ghost text-xs"
+                    onClick={() => { setSpCost(null); setNote(''); }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="admin-btn admin-btn-primary text-xs"
+                    onClick={() => void doConvert()}
+                    disabled={convertSending}
+                  >
+                    {convertSending ? 'Converting…' : 'Confirm'}
+                  </button>
+                </div>
+              </div>
             )}
             {/* v1.65.1 — Quick reply now opens an inline composer
                 below the thread (see "Send a reply" card further down

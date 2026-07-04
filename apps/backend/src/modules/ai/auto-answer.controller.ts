@@ -355,6 +355,7 @@ async function processPost(post: InstanceType<typeof CommunityPost>): Promise<vo
       pipeline:    'auto_answer',
       targetModel: 'CommunityPost',
       targetId:    post._id as Types.ObjectId,
+      batchId:     post.batchId,
       targetTitle: post.title,
       score:       result.confidence,
       verdict:     result.verdict,
@@ -573,41 +574,33 @@ export const runAutoAnswer = async (req: Request, res: Response): Promise<void> 
 };
 
 // ─── Scheduler ───────────────────────────────────────────────────────────────
+// Phase 3 R12 — autoAnswerIntervalHandle is no longer used; the
+// scheduler is now registered via cronManager in bootstrap/startup.ts
+// (name: 'auto-answer-batch'). Kept as a typed module-level slot for
+// any external code that referenced it during the v1.6x era.
 let autoAnswerIntervalHandle: ReturnType<typeof setInterval> | null = null;
 
-/** Run the auto-answer processor (fire-and-forget). Call this on startup. */
-// v1.68 — M5: read interval fresh on every tick.
-function readCheckIntervalH(): number {
-  return parseInt(process.env['AUTO_ANSWER_INTERVAL_HOURS'] || '24', 10);
-}
-
+/**
+ * DEPRECATED — Phase 3 R12. The auto-answer scheduler is now registered
+ * via cronManager in bootstrap/startup.ts (name: 'auto-answer-batch').
+ * This shim is kept so external callers that import the function don't
+ * crash, but the real scheduling is elsewhere.
+ */
 export async function runScheduledAutoAnswer(): Promise<void> {
-  const intervalH = readCheckIntervalH();
-  const ms = intervalH * 60 * 60 * 1000;
-
-  if (autoAnswerIntervalHandle) clearInterval(autoAnswerIntervalHandle);
-
-  autoAnswerIntervalHandle = setInterval(() => {
-    runAutoAnswerInternal().catch((err) => {
-      cronLog.error(`[autoAnswer] Scheduler error: ${(err as Error).message}`);
-    });
-  }, ms);
-
-  cronLog.info(`[autoAnswer] Scheduler started — running every ${readCheckIntervalH()}h`);
-
-  // Also run once on startup (with a delay to let the server warm up)
-  setTimeout(() => {
-    runAutoAnswerInternal().catch((err) => {
-      cronLog.error(`[autoAnswer] Startup run error: ${(err as Error).message}`);
-    });
-  }, 30_000);
+  cronLog.warn(
+    '[autoAnswer] runScheduledAutoAnswer is deprecated — scheduler is now in cronManager (bootstrap/startup.ts). ' +
+      'This call is a no-op.',
+  );
 }
 
 export function stopAutoAnswerScheduler(): void {
+  cronLog.warn(
+    '[autoAnswer] stopAutoAnswerScheduler is deprecated — cronManager handles stopAll in stopAllSchedulers().',
+  );
+  // Still clear the legacy handle if it was set by an old version.
   if (autoAnswerIntervalHandle) {
     clearInterval(autoAnswerIntervalHandle);
     autoAnswerIntervalHandle = null;
-    cronLog.info('[autoAnswer] Scheduler stopped.');
   }
 }
 
@@ -634,6 +627,9 @@ async function runAutoAnswerInternal(): Promise<void> {
 
   cronLog.info(`Starting scheduled run — ${posts.length} posts to process.`);
   // v1.68 — M5: read interval fresh on every tick.
+  // Phase 3 R12 — readCheckIntervalH is now a stub; the real schedule
+  // is on cronManager.
+  const readCheckIntervalH = (): number => 24;
   cronLog.info(`Starting scheduled run`, { posts: posts.length, intervalH: readCheckIntervalH() });
   const results = { processed: 0, auto_approved: 0, suggested: 0, escalated: 0, errors: 0 };
   for (const post of posts) {

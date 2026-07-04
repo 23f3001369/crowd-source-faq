@@ -101,6 +101,11 @@ export const promoteToFAQ = async (req: Request, res: Response): Promise<void> =
   if (!req.user) { res.status(401).json({ message: 'Not authorized' }); return; }
   try {
     const id = String(req.params.id);
+    // Null-check before promoting — matches the pattern in approveKnowledge /
+    // rejectKnowledge. Without this, a bogus id hits the service's
+    // "Knowledge entry not found" throw and surfaces as a misleading 500.
+    const existing = await TranscriptKnowledge.findById(id).select('_id').lean();
+    if (!existing) { res.status(404).json({ message: 'Knowledge entry not found' }); return; }
     const faqId = await promoteKnowledgeToFAQ(id, req.user._id.toString());
     const entry = await TranscriptKnowledge.findById(id);
     res.json({ message: `Promoted to FAQ ${faqId}`, faqId, entry });

@@ -517,23 +517,21 @@ export default function HomePage() {
   const activeCategoryItems = activeCategory ? (grouped[activeCategory] || []) : [];
   const activeCategoryMeta = getCategoryDescription(activeCategoryItems);
 
-  const searchActive = searchQuery.trim().length >= 3 && Array.isArray(searchResults);
-  // Keep the inline dropdown open the whole time the user is searching — results
-  // (with answers) surface right under the search bar instead of swapping the page.
+  const searchActive = searchQuery.trim().length >= 3 && Array.isArray(searchResults) && searchResults.length > 0;
+  // v2 — Show the glassmorphic dropdown as soon as the user types. The
+  // dropdown's left column shows live results from the same `searchResults`
+  // array that the in-page section consumes below — same query, same count.
   const showDropdown = searchQuery.trim().length > 0;
 
+  // v2 — Dropdown ONLY shows API search results, which stream live as the
+  // user types. The right column stays as the always-live category
+  // autocomplete inside SearchDropdown itself.
   const dropdownItems = useMemo(() => {
-    if (Array.isArray(searchResults) && searchQuery.trim().length >= 3) {
+    if (Array.isArray(searchResults)) {
       return searchResults;
     }
-    if (!searchQuery.trim()) {
-      return flatQuestions.slice(0, 5);
-    }
-    const normalized = searchQuery.trim().toLowerCase();
-    return flatQuestions.filter((item) => (
-      getQuestionTitle(item).toLowerCase().includes(normalized)
-    )).slice(0, 5);
-  }, [flatQuestions, searchResults, searchQuery]);
+    return [];
+  }, [searchResults]);
 
   const relatedItems = useMemo(() => {
     if (!activeQuestion?.category) return [];
@@ -579,7 +577,8 @@ export default function HomePage() {
     if (value.trim()) {
       setActiveCategory('');
       setActiveQuestion(null);
-      setSearchResults(null);
+      // v2 — Don't wipe searchResults on every keystroke; let the SearchBar's
+      // 300ms debounce overwrite naturally. Avoids the 0→5→0 flicker.
     }
   };
 

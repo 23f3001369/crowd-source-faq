@@ -157,7 +157,7 @@ export default function CommentNode({
       `/community/${postId}/comments/${comment._id}/downvote`
     ).then(res => {
       if (res.data.deleted) {
-        try { new Audio('/fahhhhh.mp3').play(); } catch (_) {}
+        try { new Audio('/fahhhhh.mp3').play(); } catch (_) { void 0 }
         const el = document.getElementById(`comment-${comment._id}`);
         if (el) { el.style.setProperty('--current-opacity', String(commentOpacity)); el.classList.add('comment-dying'); }
         return;
@@ -345,7 +345,7 @@ export default function CommentNode({
                       {deleteLoading ? '…' : '🗑'}
                     </button>
                   )}
-                  {idMatches(postAuthorId, currentUserId) && (
+                  {(idMatches(postAuthorId, currentUserId) || userRole === 'admin' || userRole === 'moderator') && (
                     <button
                       onClick={async () => {
                         if (isVerified) return;

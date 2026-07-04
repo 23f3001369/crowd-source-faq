@@ -252,7 +252,7 @@ export async function runRag(question: string, attachments: RagAttachment[] = []
       logger.warn('rag.community.search.failed', { error: (e as Error).message });
       return [] as PostHit[];
     }),
-    searchKnowledge(question, TOP_K_PER_SOURCE).catch((e) => {
+    searchKnowledge(question, TOP_K_PER_SOURCE, { embedQuery: true }).catch((e) => {
       logger.warn('rag.knowledge.search.failed', { error: (e as Error).message });
       return [] as Awaited<ReturnType<typeof searchKnowledge>>;
     }),

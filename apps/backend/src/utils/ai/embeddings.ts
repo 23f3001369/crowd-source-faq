@@ -69,7 +69,7 @@ function normalizeL2(vec: number[]): number[] {
 }
 
 // ── In-process local pipeline (disabled) ───────────────────────────────
-let isWarmed = false;
+const isWarmed = false;
 
 /** Warm up the embedding pipeline. */
 export const warmEmbedder = async (): Promise<void> => {
@@ -80,8 +80,17 @@ export const warmEmbedder = async (): Promise<void> => {
  * Generate an embedding for a DOCUMENT (FAQ, post, etc.).
  */
 export const generateEmbedding = async (text: string, options?: { batchId?: string | null }): Promise<number[]> => {
-  const { model, baseURL, apiKey } = await getActiveEmbeddingConfig(options?.batchId);
-  return callCustomEmbedding(text, apiKey, model, baseURL);
+  try {
+    const { model, baseURL, apiKey } = await getActiveEmbeddingConfig(options?.batchId);
+    return await callCustomEmbedding(text, apiKey, model, baseURL);
+  } catch (err) {
+    if (process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development') {
+      const { dimensions } = await getActiveEmbeddingConfig(options?.batchId);
+      logger.warn(`[embeddings] Custom embedding API failed, falling back to mock vector: ${(err as Error).message}`);
+      return new Array(dimensions).fill(0);
+    }
+    throw err;
+  }
 };
 
 /**

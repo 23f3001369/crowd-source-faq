@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import api, { friendlyError } from '../../utils/api';
+import api from '../../utils/api';
 
 interface ReviewVoteButtonsProps {
   faqId: string;
@@ -39,7 +39,7 @@ export default function ReviewVoteButtons({
       setNeedsUpdate(needsUpdateVotes);
       onVoteUpdate?.(accurateVotes, needsUpdateVotes);
     } catch (e) {
-      console.error(friendlyError(e, 'Vote failed.'));
+      console.error('Vote failed:', e);
     } finally {
       setLoading(false);
     }

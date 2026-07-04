@@ -136,7 +136,7 @@ export default function GoldenTicketPage(): React.ReactElement {
     if (!status) return;
     const cap = Math.min(MAX_SP, status.sp);
     if (spCost > cap) setSpCost(Math.max(MIN_SP, Math.min(cap, 1)));
-  }, [status?.sp, status?.canSubmitGolden]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [status?.sp, status?.canSubmitGolden]);
 
   const reloadStatus = useCallback(async () => {
     if (!isAuthed) return;
@@ -225,7 +225,7 @@ export default function GoldenTicketPage(): React.ReactElement {
   }
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 pt-28 sm:pt-32 pb-8">
+    <div data-tour="golden-page-content" className="max-w-6xl mx-auto px-4 sm:px-6 pt-28 sm:pt-32 pb-8">
       {/* v1.66 anti-pattern: never use navigate(-1) for back. */}
       <button
         type="button"

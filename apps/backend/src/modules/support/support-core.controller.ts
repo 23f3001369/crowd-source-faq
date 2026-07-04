@@ -20,7 +20,7 @@ import type { SupportStatus } from './support-request.model.js';
 import Notification from '../notification/notification.model.js';
 import AdminLog from '../admin/admin-log.model.js';
 import { supportLog } from '../../utils/http/logger.js';
-import { isFeatureEnabled } from '../program/feature-flag.controller.js';
+import { featureFlags } from '../program/feature-flag.controller.js';
 
 // ─── Valid statuses (mirrors the model enum) ────────────────────────────────
 
@@ -222,7 +222,7 @@ export async function logAdminAction(
  *  the new `goldenTicket` flag (and any future ones) can reuse the
  *  same gate without duplicating the boilerplate. */
 export async function requireFeatureOn(req: Request, res: Response, key: 'sessionSupport' | 'goldenTicket' = 'sessionSupport'): Promise<boolean> {
-  if (!(await isFeatureEnabled(key))) {
+  if (!(await featureFlags.isEnabled(key))) {
     res.status(404).json({ message: 'This feature is not available.' });
     return false;
   }
