@@ -504,6 +504,13 @@ export const chat = chatWithProvider;
  * Does NOT re-resolve — uses exactly what getPipelineProviderConfig returned.
  * Used by pipeline controllers (faqAudit, autoAnswer) that need per-pipeline
  * provider/model overrides from env vars.
+ *
+ * USER-FACING call sites should prepend the assistant persona:
+ *   import { getAssistantPersona } from './assistantPersona.js';
+ *   messages = [{ role: 'system', content: getAssistantPersona() + '\n\n' + taskPrompt }, ...]
+ *
+ * Back-office / admin call sites (extraction, audit, dedup) should NOT
+ * add the persona — their task prompts stand alone.
  */
 export async function chatWithConfig(
   config: ProviderConfig,

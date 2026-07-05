@@ -19,6 +19,7 @@ import mongoose from 'mongoose';
 import { generateQueryEmbedding } from '../../utils/ai/embeddings.js';
 import { resolveProviderAsync } from '../../utils/ai/aiProvider.js';
 import { searchKnowledge } from '../knowledge/knowledge-base.service.js';
+import { getAssistantPersona } from '../../utils/ai/assistantPersona.js';
 import { logger } from '../../utils/http/logger.js';
 
 export interface RagSource {
@@ -202,7 +203,16 @@ function buildContext(sources: RagSource[]): string {
 }
 
 function buildPrompt(question: string, context: string): string {
-  return `You are the Yaksha FAQ assistant. Answer the user's question using ONLY the sources provided below. Be honest about uncertainty — if the sources don't contain the answer, say so plainly and suggest they ask the community.
+  // Persona + task instructions prepended as a single text block. The
+  // chatCompletion helper here uses a custom HTTP request shape, not
+  // chatWithConfig, so we don't have a separate system-message field.
+  // Persona is at the top so it dominates the model's voice; task
+  // instructions are specific to RAG synthesis.
+  return `${getAssistantPersona()}
+
+---
+
+You are answering a user question using ONLY the sources provided below. Be honest about uncertainty — if the sources don't contain the answer, say so plainly and suggest they ask the community.
 
 Cite sources inline by their bracketed index, e.g. "The NOC is required by your HOD before you sign it [1][3]." Use one citation per fact, multiple citations are fine when sources agree.
 

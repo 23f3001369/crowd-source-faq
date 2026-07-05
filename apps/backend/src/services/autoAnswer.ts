@@ -39,6 +39,7 @@ import {
   getPipelineProviderConfig,
 } from '../utils/ai/aiProvider.js';
 import { isSensitiveContent } from '../utils/ai/pipelineCommon.js';
+import { getAssistantPersona } from '../utils/ai/assistantPersona.js';
 
 // ─── Public types ─────────────────────────────────────────────────────────
 
@@ -164,9 +165,10 @@ async function generateAnswerFromContext(
     const reply = await chatWithConfig(cfg, [
       {
         role: 'system',
-        content:
-          "You are an assistant. Use the provided context to answer the user's question concisely. " +
-          'Keep replies under 300 words. If the context does not contain a complete answer, say so explicitly.',
+        // Persona first — establishes identity, tone, and rules. Then
+        // task-specific instructions for THIS call (synthesis, length
+        // cap, honesty about missing context).
+        content: `${getAssistantPersona()}\n\n---\n\nYou are answering a community question. Use ONLY the provided context sources to answer. Keep replies under 300 words. If the context does not contain a complete answer, say so explicitly and suggest the user post to the community for help.`,
       },
       {
         role: 'user',
