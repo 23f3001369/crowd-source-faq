@@ -544,3 +544,44 @@ export const adminLegendPendingDot  = 'rgb(var(--warning-rgb))';                
 export const adminLegendRejectedDot = 'rgb(var(--danger-rgb))';                 /* rejected legend dot */
 export const adminChartPercentText = 'rgb(var(--text-primary-rgb))';            /* big % number */
 export const adminChartSubtleText  = 'rgb(var(--text-primary-rgb) / 0.30)';    /* "resolved" label */
+
+/* ── 39. Navbar chrome ─────────────────────────────────────────
+ * Mobile hamburger, mobile dropdown link (active + idle), and
+ * desktop secondary-nav link (active + idle). Replaces two
+ * 'bg-accent-light' instances (broken — silently stripped by
+ * the build) and three 'hover:bg-black/[0.04]' / 'hover:bg-black/[0.03]'
+ * instances (raw black arbitrary values). */
+
+export const navHamburger         = 'lg:hidden flex w-9 h-9 items-center justify-center rounded-[10px] hover:bg-black/5 transition-colors';
+export const navMobileLinkActive  = 'bg-accent/10 text-accent';
+export const navMobileLinkIdle    = 'text-ink-soft hover:text-ink hover:bg-black/[0.03]';
+export const navMobileLinkBase    = 'block px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-200';
+export const navSecondaryLinkBase = 'block px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-200';
+
+/* ── 40. Avatar palette (hash → stable user-identity colour) ───
+ * The user-avatar "tag colour" was a 6-colour array of arbitrary
+ * hex values hand-picked for visual distinction across users.
+ * These are NOT theme tokens — they're user-identity colours
+ * (a single user always has the same one regardless of theme),
+ * but the palette needs to live in style_config.ts so it can
+ * be evolved in one place. Returns hex strings because the
+ * consumer is a CSS background-color inline style. */
+
+export const avatarColor1   = '#6b92e0';   /* sky blue */
+export const avatarColor2   = '#5a9a6b';   /* sage green */
+export const avatarColor3   = '#c4943a';   /* amber */
+export const avatarColor4   = '#e07c6b';   /* coral */
+export const avatarColor5   = '#7c6be0';   /* violet */
+export const avatarColor6   = '#e06ba8';   /* pink */
+export const avatarColorDefault = '#6b92e0';
+
+/** Array form for index-based hash lookup. Order must match
+ * the colours[] array used by the avatar fallback logic. */
+export const avatarColorPalette: readonly string[] = [
+  avatarColor1,
+  avatarColor2,
+  avatarColor3,
+  avatarColor4,
+  avatarColor5,
+  avatarColor6,
+];
