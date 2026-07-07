@@ -273,7 +273,12 @@ export const updateAiConfig = async (req: Request, res: Response): Promise<void>
 
 export const resetAiUsage = async (req: Request, res: Response): Promise<void> => {
   try {
-    const config = await AiConfig.findOne({ isActive: true });
+    // S5-C6 (CRITICAL) fix: scope the findOne to the GLOBAL config
+    // (batchId: null). Previously this returned any active doc — with
+    // per-program overrides, it could return a program-specific override
+    // instead of the global default. `revealApiKey` then surfaced the
+    // wrong key, and `resetAiUsage` reset the wrong usage row.
+    const config = await AiConfig.findOne({ isActive: true, batchId: null });
     if (config) {
       // v1.68 — H3 fix: atomic reset via $set.
       await AiConfig.findOneAndUpdate(
@@ -293,7 +298,8 @@ export const resetAiUsage = async (req: Request, res: Response): Promise<void> =
 export const getAiProviders = async (_req: Request, res: Response): Promise<void> => {
   type ProviderKey = AIProviderType;
 
-  const config = await AiConfig.findOne({ isActive: true });
+  // S5-C6 (CRITICAL) fix: see resetAiUsage above. Scope to global config.
+  const config = await AiConfig.findOne({ isActive: true, batchId: null });
   const providerMeta: Record<ProviderKey, { label: string; defaultModel: string; hasKey: boolean; configuredModel: string }> = {
     anthropic: { label: 'Anthropic Claude', defaultModel: 'claude-sonnet-4-20250514', hasKey: false, configuredModel: 'claude-sonnet-4-20250514' },
     openai:    { label: 'OpenAI GPT',       defaultModel: 'gpt-4o-mini',              hasKey: false, configuredModel: 'gpt-4o-mini' },
@@ -363,7 +369,9 @@ export const revealApiKey = async (req: Request, res: Response): Promise<void> =
     return;
   }
 
-  const config = await AiConfig.findOne({ isActive: true });
+  // S5-C6 (CRITICAL) fix: see resetAiUsage above. Scope to global config
+  // so revealApiKey surfaces the global API key, not a per-program override.
+  const config = await AiConfig.findOne({ isActive: true, batchId: null });
   let key: string | null = null;
   if (provider === 'embedding') {
     key = config?.getEmbeddingApiKey() ?? null;
@@ -384,25 +392,46 @@ export const revealApiKey = async (req: Request, res: Response): Promise<void> =
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+// S5-H17 (HIGH) fix: replaced substring matchers with an exact-match
+// closed set per provider. The previous `lowerModel.includes('claude')`
+// pattern accepted e.g. 'gpt-claude-minimax-trash-injection-xss' for
+// any provider whose name appeared anywhere in the string. Exact
+// match against a closed set blocks the bypass. To add a new model
+// for a provider, extend the set below.
+const VALID_MODELS: Record<string, ReadonlySet<string>> = {
+  anthropic: new Set([
+    'claude-3-5-sonnet-20241022',
+    'claude-3-5-haiku-20241022',
+    'claude-3-opus-20240229',
+    'claude-opus-4-5',
+  ]),
+  openai: new Set([
+    'gpt-4o',
+    'gpt-4o-mini',
+    'gpt-4-turbo',
+    'gpt-3.5-turbo',
+    'o1-preview',
+    'o1-mini',
+    'o3-mini',
+  ]),
+  xai: new Set(['grok-2', 'grok-2-mini', 'grok-beta']),
+  minimax: new Set(['MiniMax-Text-01', 'abab-6.5-chat', 'abab-7-chat']),
+  gemini: new Set(['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-2.0-flash-exp']),
+};
+
 export function validateModelForProvider(model: string, provider: string): { isValid: boolean; error?: string } {
   if (!model) {
     return { isValid: true };
   }
-  const lowerModel = model.toLowerCase();
-  if (provider === 'anthropic' && !lowerModel.includes('claude')) {
-    return { isValid: false, error: "Anthropic models must contain 'claude'." };
+  const allowed = VALID_MODELS[provider];
+  if (!allowed) {
+    return { isValid: true }; // unknown provider — let the runtime decide
   }
-  if (provider === 'openai' && !(lowerModel.includes('gpt') || lowerModel.includes('o1') || lowerModel.includes('o3'))) {
-    return { isValid: false, error: "OpenAI models must contain 'gpt', 'o1', or 'o3'." };
-  }
-  if (provider === 'xai' && !lowerModel.includes('grok')) {
-    return { isValid: false, error: "xAI models must contain 'grok'." };
-  }
-  if (provider === 'minimax' && !(lowerModel.includes('minimax') || lowerModel.includes('abab'))) {
-    return { isValid: false, error: "MiniMax models must contain 'minimax' or 'abab'." };
-  }
-  if (provider === 'gemini' && !lowerModel.includes('gemini')) {
-    return { isValid: false, error: "Gemini models must contain 'gemini'." };
+  if (!allowed.has(model)) {
+    return {
+      isValid: false,
+      error: `Model "${model}" is not in the allowed set for provider "${provider}". Allowed: ${Array.from(allowed).join(', ')}.`,
+    };
   }
   return { isValid: true };
 }
@@ -419,7 +448,8 @@ function envModelName(p: AIProviderType): string {
  * Priority: anthropic > openai > xai > minimax.
  */
 export async function detectActiveProvider(): Promise<AIProviderType> {
-  const config = await AiConfig.findOne({ isActive: true });
+  // S5-C6 (CRITICAL) fix: scope to global config.
+  const config = await AiConfig.findOne({ isActive: true, batchId: null });
   const hasKey = (p: AIProviderType) => {
     const keyEnv = { anthropic: 'ANTHROPIC_API_KEY', openai: 'OPENAI_API_KEY', xai: 'XAI_API_KEY', minimax: 'MINIMAX_API_KEY', gemini: 'GEMINI_API_KEY', custom: 'CUSTOM_API_KEY' }[p];
     return !!((config && config.getApiKey(p)) || process.env[keyEnv]);
