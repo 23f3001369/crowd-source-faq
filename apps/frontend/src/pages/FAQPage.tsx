@@ -69,27 +69,42 @@ export default function FAQPage() {
   const noProgramSelected = !batchId;
 
   // ── Fetch all FAQs when batchId changes ─────────────────────────
-  useEffect(() => {
+  //
+  // 1.8 (LOW) — the previous retry button re-fired `api.get('/faq')`
+  // WITHOUT the batchId param, dropping the active program filter
+  // when the user hit a transient error and tapped Retry. Hoist the
+  // fetch into a `load()` helper that closes over the current
+  // `batchId`; both the effect and the retry button call it.
+  //
+  // 1.10 (LOW) — the inline retry handler had no in-flight guard, so
+  // a double-click could fire two parallel `/faq` requests whose
+  // responses could race. Track in-flight in a ref so a second call
+  // from anywhere (Retry button, programmatic, etc.) no-ops while a
+  // fetch is pending. The state-based `loading` flag drives the UI
+  // disabled state.
+  const inFlightRef = useRef(false);
+  const load = useCallback(async (): Promise<void> => {
     if (!batchId) return;
-    let mounted = true;
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
     setLoading(true);
-
-    // /api/faq — full grouped list
-    api.get('/faq', { params: { batchId } })
-      .then((res) => {
-        if (!mounted) return;
-        setGrouped(applyQuestionNumbers(res.data.grouped || {}));
-        setTotal(res.data.total || 0);
-      })
-      .catch((err: unknown) => {
-        if (!mounted) return;
-        const message = (err as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed to load FAQs. Please try again.';
-        setError(message);
-      })
-      .finally(() => { if (mounted) setLoading(false); });
-
-    return () => { mounted = false; };
+    try {
+      const res = await api.get('/faq', { params: { batchId } });
+      setGrouped(applyQuestionNumbers(res.data.grouped || {}));
+      setTotal(res.data.total || 0);
+      setError('');
+    } catch (err: unknown) {
+      const message = (err as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed to load FAQs. Please try again.';
+      setError(message);
+    } finally {
+      inFlightRef.current = false;
+      setLoading(false);
+    }
   }, [batchId]);
+
+  useEffect(() => {
+    void load();
+  }, [batchId, load]);
 
   // ── Derived data ─────────────────────────────────────────────────────────
   const categories = useMemo(() => Object.keys(grouped).sort((a, b) => {
@@ -201,21 +216,22 @@ export default function FAQPage() {
   const activeCategoryItems = activeCategory ? (grouped[activeCategory] || []) : [];
   const activeCategoryMeta = getCategoryDescription(activeCategoryItems);
 
-  const searchActive = searchQuery.trim().length >= 3 && Array.isArray(searchResults);
-  const showDropdown = searchQuery.trim().length > 0 && !searchActive;
+  const searchActive = searchQuery.trim().length >= 3 && Array.isArray(searchResults) && searchResults.length > 0;
+  // v2 — Show the glassmorphic dropdown as soon as the user types a single
+  // character. The dropdown's left column shows live results from the same
+  // `searchResults` array that the in-page section consumes below, so the
+  // two views cannot disagree on counts.
+  const showDropdown = searchQuery.trim().length > 0;
 
+  // v2 — Dropdown now ONLY shows API search results, which stream live as
+  // the user types. The right column stays as the always-live category
+  // autocomplete inside SearchDropdown itself.
   const dropdownItems = useMemo(() => {
-    if (Array.isArray(searchResults) && searchQuery.trim().length >= 3) {
+    if (Array.isArray(searchResults)) {
       return searchResults;
     }
-    if (!searchQuery.trim()) {
-      return flatQuestions.slice(0, 5);
-    }
-    const normalized = searchQuery.trim().toLowerCase();
-    return flatQuestions.filter((item) => (
-      getQuestionTitle(item).toLowerCase().includes(normalized)
-    )).slice(0, 5);
-  }, [flatQuestions, searchResults, searchQuery]);
+    return [];
+  }, [searchResults]);
 
   const relatedItems = useMemo(() => {
     if (!activeQuestion?.category) return [];
@@ -261,7 +277,12 @@ export default function FAQPage() {
     if (value.trim()) {
       setActiveCategory('');
       setActiveQuestion(null);
-      setSearchResults(null);
+      // v2 — Do NOT clear searchResults on every keystroke. The SearchBar
+      // streams new results every 300ms; wiping on every input causes a
+      // visible flicker between "5 results" and "0 results" while the user
+      // types. We let the SearchBar's debounced handleSearch() overwrite
+      // searchResults naturally; if the user goes below 3 chars, the
+      // SearchBar explicitly clears via onResults(null).
     }
   };
 
@@ -383,9 +404,13 @@ export default function FAQPage() {
         {error && !loading && (
           <div className="mt-8 rounded-2xl bg-danger-light border border-danger/15 p-6 text-center space-y-3">
             <p className="text-sm text-danger font-medium">{error}</p>
+            {/* 1.8 + 1.10 — call the shared load() helper so Retry
+                keeps the batchId param AND is disabled while a fetch
+                is already in flight. */}
             <button
-              onClick={() => { setError(''); setLoading(true); api.get('/faq').then(res => { setGrouped(applyQuestionNumbers(res.data.grouped || {})); setTotal(res.data.total || 0); }).catch((err: unknown) => { const m = (err as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed to load FAQs.'; setError(m); }).finally(() => setLoading(false)); }}
-              className="px-5 py-2 text-sm font-medium bg-danger text-accent-text rounded-full hover:bg-danger/90 transition-colors"
+              onClick={() => { void load(); }}
+              disabled={loading}
+              className="px-5 py-2 text-sm font-medium bg-danger text-accent-text rounded-full hover:bg-danger/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Retry
             </button>
@@ -409,9 +434,16 @@ export default function FAQPage() {
           />
         )}
 
-        {/* ─── SEARCH RESULTS ───────────────────────────────────────── */}
+        {/* ─── SEARCH RESULTS ─────────────────────────────────────────
+            v2 — Uses the same `.search-panel` glassmorphic class as the
+            search dropdown above, so the two views feel like one component
+            family. This section appears once results exist and the dropdown
+            is dismissed (focus lost / user scrolled / Enter). It does NOT
+            hide the hero or category cards — those stay visible so the
+            user keeps their navigation scaffold.
+        */}
         {!loading && !error && !activeQuestion && searchActive && (
-          <section className="max-w-4xl mx-auto mt-6">
+          <section className="max-w-4xl mx-auto mt-6 search-panel p-6">
             <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
               <div>
                 <p className="text-xs font-semibold text-ink-faint uppercase tracking-wide">Search results</p>

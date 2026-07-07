@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import { login, register, getMe, getAllUsers, updateUserRole, deleteUser, updateProfile, changePassword, exportUserData, logout, refresh } from './auth.controller.js';
 import { protect, authorize } from '../../middleware/auth.js';
-import { loginLimiter, registerLimiter, passwordChangeLimiter } from '../../utils/auth/rateLimit.js';
-import { validateBody, registerSchema, loginSchema, updateProfileSchema, changePasswordSchema } from '../../utils/auth/validation.js';
+import { loginLimiter, registerLimiter, passwordChangeLimiter, refreshLimiter } from '../../utils/auth/rateLimit.js';
+import { validateBody, refreshSchema, registerSchema, loginSchema, updateProfileSchema, changePasswordSchema } from '../../utils/auth/validation.js';
 // v1.70 — Controlled-registration gate. Mounted BEFORE validateBody so
 // closed/invalid-token requests 403 before the Zod schema runs.
 import { registrationGate } from '../../utils/auth/registrationGate.js';
@@ -25,8 +25,16 @@ router.get('/registration-status', publicGetRegistrationStatus);
 // POST /api/auth/login (Public) — rate-limited, validated
 router.post('/login', loginLimiter, validateBody(loginSchema), login);
 
-// POST /api/auth/refresh (Public) — rotates access + refresh tokens
-router.post('/refresh', refresh);
+// POST /api/auth/refresh (Public) — rotates access + refresh tokens.
+// H4-1 (HIGH) fix: previously this route had no rate limiter. The
+// refresh endpoint is the natural target for token-reuse brute force
+// attacks — an attacker who has extracted an old refresh token can
+// fire it repeatedly. Apply `refreshLimiter` (5/min per identity).
+// H4-2 (HIGH) fix: previously `req.body.refreshToken` was read raw
+// with no Zod validation — unbounded length means a 10MB string
+// can hit `jwt.verify`. Add `validateBody(refreshSchema)` to enforce
+// `min(20).max(2048)` length. (Schema added in validation.ts below.)
+router.post('/refresh', refreshLimiter, validateBody(refreshSchema), refresh);
 
 // POST /api/auth/logout (Protected) — revokes the JWT carried by the request
 router.post('/logout', protect, logout);

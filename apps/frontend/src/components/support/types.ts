@@ -179,3 +179,88 @@ export interface SupportAnalytics {
     createdAt: string;
   }>;
 }
+
+// ── Golden Ticket user-side types (v1.73) ──────────────────────────────
+
+/**
+ * A single admin answer stored in `goldenResolutions[]` on a Golden
+ * SupportRequest. The bell deep-links to the corresponding user-side
+ * page so the user can read these.
+ */
+export interface GoldenResolutionPublic {
+  text: string;
+  adminId: string;
+  adminName: string;
+  createdAt: string;
+  notificationSent: boolean;
+}
+
+/**
+ * One row of the user-facing Golden history list. Includes the
+ * resolved/rejected state, the admin answers (when resolved), and
+ * any rejection reason (when rejected).
+ */
+export interface GoldenHistoryItem {
+  _id: string;
+  title: string;
+  details: string;
+  status: SupportStatus | string;
+  spCost: number;
+  userName: string;
+  createdAt: string;
+  resolvedAt: string | null;
+  rejectedAt: string | null;
+  rejectionReason: string;
+  goldenResolutions: GoldenResolutionPublic[];
+  /** The caller's user-level ban timestamp, if set. */
+  bannedUntil: string | null;
+  isBanned: boolean;
+}
+
+/** Active ban window for the caller, derived from `user.goldenBannedUntil`. */
+export interface GoldenHistoryBanned {
+  userId: string;
+  bannedUntil: string;
+  isActiveBan: boolean;
+  banHours: number;
+}
+
+/**
+ * One row of the activity log timeline reconstructed server-side
+ * from each ticket's statusHistory + goldenResolutions. Sorted
+ * newest-first by the backend.
+ */
+export interface GoldenActivityEvent {
+  type: 'ticket_raised' | 'resolved' | 'rejected' | 're_resolved';
+  ticketId: string;
+  title: string;
+  at: string;
+  status: string;
+  details: string;
+}
+
+/** Response shape for `GET /api/support/golden/history`. */
+export interface GoldenHistoryResponse {
+  history: GoldenHistoryItem[];
+  banned: GoldenHistoryBanned[];
+  activity: GoldenActivityEvent[];
+  pagination: { total: number; page: number; limit: number; pages: number };
+}
+
+/** Response shape for `GET /api/support/golden/:id` (single ticket thread). */
+export interface GoldenTicket {
+  _id: string;
+  title: string;
+  details: string;
+  status: SupportStatus | string;
+  spCost: number;
+  userId: string;
+  createdAt: string;
+  updatedAt: string;
+  resolvedAt: string | null;
+  rejectedAt: string | null;
+  rejectionReason: string;
+  goldenResolutions: GoldenResolutionPublic[];
+  userName: string;
+  userEmail: string;
+}

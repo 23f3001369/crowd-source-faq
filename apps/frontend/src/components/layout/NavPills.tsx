@@ -14,16 +14,25 @@ export const baseNavItems: NavItem[] = [
 
 export function useNavItems() {
   const { user } = useAuth();
-  const supportOn = useFeatureFlag('sessionSupport');
-  const goldenOn = useFeatureFlag('goldenTicket');
+  const { enabled: supportOn } = useFeatureFlag('sessionSupport');
+  const { enabled: goldenOn } = useFeatureFlag('goldenTicket');
+  const { enabled: welcomeOn, loading: flagsLoading } = useFeatureFlag('welcomePackage');
 
   const goldenExtras: NavItem[] = goldenOn
     ? [{ label: 'Golden', to: '/golden', xlOnly: true as const }]
     : [];
-  
+
+  // Welcome Package nav link is admin-controlled. Hide on an explicit
+  // `false` (and only after the flag list has loaded — don't flicker
+  // the link off during the initial load).
+  const visibleBaseItems =
+    !flagsLoading && welcomeOn === false
+      ? baseNavItems.filter((item) => item.to !== '/welcome')
+      : baseNavItems;
+
   let allNavItems: NavItem[] = supportOn
-    ? [...baseNavItems, { label: 'Support', to: '/support' }, ...goldenExtras]
-    : baseNavItems;
+    ? [...visibleBaseItems, { label: 'Support', to: '/support' }, ...goldenExtras]
+    : visibleBaseItems;
 
   if (user?.role === 'admin') {
     allNavItems = allNavItems
@@ -43,13 +52,14 @@ export function NavPills() {
   const allNavItems = useNavItems();
 
   return (
-    <div className="flex items-center justify-center gap-1.5 px-1.5 py-[5px] rounded-full border-[1.5px] border-[rgb(var(--border-rgb)_/_0.6)] bg-[rgb(var(--bg-card-rgb)_/_0.85)] backdrop-blur-[24px] shadow-md transition-all duration-300 hover:bg-[rgb(var(--bg-card-rgb)_/_0.95)] z-50">
+    <div data-tour="nav-pills" className="flex items-center justify-center gap-1.5 px-1.5 py-[5px] rounded-full border-[1.5px] border-[rgb(var(--border-rgb)_/_0.6)] bg-[rgb(var(--bg-card-rgb)_/_0.85)] backdrop-blur-[24px] shadow-md transition-all duration-300 hover:bg-[rgb(var(--bg-card-rgb)_/_0.95)] z-50">
       {allNavItems.map(({ label, to, xlOnly }) => {
         const isWelcome = to === '/welcome';
         const needsPulse = isWelcome && user && !user.orientationCompleted;
 
         return (
           <NavLink
+            data-tour={`nav-pill-${label.toLowerCase().replace(/\s+/g, '-')}`}
             key={to}
             to={to}
             end={to === '/'}

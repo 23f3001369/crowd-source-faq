@@ -5,6 +5,7 @@ import {
   changePasswordSchema,
   passwordPolicy,
   warnUserSchema,
+  updateProfileSchema,
 } from '../validation.js';
 
 /**
@@ -118,3 +119,42 @@ describe('moderation validation — ObjectId guards reject injection payloads', 
     ).toBe(true);
   });
 });
+
+describe('profile update validation', () => {
+  it('accepts a valid updateProfile payload with name, email, and avatar', () => {
+    const res = updateProfileSchema.safeParse({
+      name: 'Ada Lovelace',
+      email: 'ada@example.com',
+      avatar: {
+        url: 'https://res.cloudinary.com/mycloud/image/upload/v123/profile.png',
+        publicId: 'profile',
+      },
+    });
+    expect(res.success).toBe(true);
+  });
+
+  it('rejects NoSQL injection attempts in updates', () => {
+    const res = updateProfileSchema.safeParse({
+      email: { $gt: '' } as any,
+      avatar: {
+        url: { $ne: null } as any,
+      },
+    });
+    expect(res.success).toBe(false);
+  });
+
+  it('strips unknown fields / prevents mass assignment', () => {
+    const parsed = updateProfileSchema.parse({
+      name: 'Ada',
+      role: 'admin',
+      avatar: {
+        url: 'https://res.cloudinary.com/mycloud/image/upload/v123/profile.png',
+        isAdmin: true,
+      },
+    } as any);
+    expect(parsed).not.toHaveProperty('role');
+    expect(parsed.avatar).not.toHaveProperty('isAdmin');
+    expect(parsed.avatar?.url).toBe('https://res.cloudinary.com/mycloud/image/upload/v123/profile.png');
+  });
+});
+

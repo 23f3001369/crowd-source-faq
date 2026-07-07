@@ -15,6 +15,7 @@
 
 import AiConfig from './ai-config.model.js';
 import { generateQueryEmbedding } from '../../utils/ai/embeddings.js';
+import { logAiApiSuccess, logAiApiFailure } from '../../utils/ai/apiUsageLog.js';
 import { logger } from '../../utils/http/logger.js';
 
 // ─── Provider definitions ───────────────────────────────────────────────────
@@ -101,7 +102,7 @@ export type AIFeature =
 export interface AIResult {
   content: string;
   provider: AIProvider;
-  model: string;
+  modelName: string;
   tokensUsed: number;
   estimatedCost: number; // USD
   rawResponse?: unknown;
@@ -238,7 +239,7 @@ export class AiClient {
             ]
           }),
           provider: 'openai',
-          model: 'gpt-4o',
+          modelName: 'gpt-4o',
           tokensUsed: 100,
           estimatedCost: 0,
         };
@@ -247,7 +248,7 @@ export class AiClient {
         return {
           content: JSON.stringify({ isDuplicate: false, matches: [] }),
           provider: 'openai',
-          model: 'gpt-4o',
+          modelName: 'gpt-4o',
           tokensUsed: 50,
           estimatedCost: 0,
         };
@@ -264,7 +265,7 @@ export class AiClient {
             grammarIssues: [],
           }),
           provider: 'openai',
-          model: 'gpt-4o',
+          modelName: 'gpt-4o',
           tokensUsed: 100,
           estimatedCost: 0,
         };
@@ -272,7 +273,7 @@ export class AiClient {
       return {
         content: 'This is a mock AI response for testing.',
         provider: 'openai',
-        model: 'gpt-4o',
+        modelName: 'gpt-4o',
         tokensUsed: 50,
         estimatedCost: 0,
       };
@@ -297,8 +298,8 @@ export class AiClient {
     }
 
     const featureConfig = dbConfig?.features?.[feature];
-    const rawModel = overrides?.model || featureConfig?.model || config.model;
-    const model = getModelForProvider(rawModel, config.provider, config.model);
+    const rawModel = overrides?.model || featureConfig?.model || config.modelName;
+    const model = getModelForProvider(rawModel, config.provider, config.modelName);
 
     if (!model) {
       throw new Error(`No AI model configured for provider '${config.provider}'. Please configure a model in Admin Settings.`);
@@ -316,19 +317,16 @@ export class AiClient {
       headers['anthropic-version'] = '2023-06-01';
     }
 
-    // Log configuration immediately before AI request
-    const apiKeySource = config.apiKey ? 'Admin Settings / DB' : 'Environment Variable / Default';
-    console.log('--- AI Request Configuration ---');
-    console.log('provider =', config.provider);
-    console.log('model =', model);
-    console.log('task =', feature);
-    console.log('apiKeyPresent =', !!config.apiKey);
-    console.log('apiKeySource =', apiKeySource);
-    console.log('baseUrl =', config.baseURL);
-    console.log('--------------------------------');
+    // v1.79 — replaced the previous ad-hoc `console.log('--- AI
+    // Request Configuration ---')` block (and its companion
+    // `logger.warn` on failure) with a single structured audit
+    // log via `logAiApiSuccess` / `logAiApiFailure`. Captures
+    // provider, model, feature, duration, tokens, and HTTP
+    // status uniformly across all three call sites.
+    const requestStartedAt = Date.now();
 
     const body: Record<string, unknown> = {
-      model,
+      modelName: model,
       max_tokens: maxTokens,
       temperature,
       messages,
@@ -341,15 +339,41 @@ export class AiClient {
       url = `${config.baseURL}/chat/completions`;
     }
 
-    const res = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-    });
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      // Network-level failure (DNS, TLS, abort, etc.) — no HTTP status.
+      logAiApiFailure({
+        kind: 'inference',
+        provider: config.provider,
+        modelName: model,
+        feature,
+        durationMs: Date.now() - requestStartedAt,
+        batchId,
+        error: (err as Error).message,
+      });
+      throw err;
+    }
 
     if (!res.ok) {
       const text = await res.text();
-      throw new Error(`${config.provider} API error (${res.status}): ${text.slice(0, 300)}`);
+      const err = new Error(`${config.provider} API error (${res.status}): ${text.slice(0, 300)}`);
+      logAiApiFailure({
+        kind: 'inference',
+        provider: config.provider,
+        modelName: model,
+        feature,
+        durationMs: Date.now() - requestStartedAt,
+        batchId,
+        error: err.message,
+        status: res.status,
+      });
+      throw err;
     }
 
     const data = (await res.json()) as Record<string, unknown>;
@@ -369,12 +393,23 @@ export class AiClient {
 
     const estimatedCost = (tokensUsed / 1_000_000) * COST_PER_MILLION_TOKENS[config.provider];
 
+    logAiApiSuccess({
+      kind: 'inference',
+      provider: config.provider,
+      modelName: model,
+      feature,
+      durationMs: Date.now() - requestStartedAt,
+      tokensUsed,
+      estimatedCostUsd: estimatedCost,
+      batchId,
+    });
+
     // Track usage in DB (best effort — don't block on this)
     this.trackUsage(tokensUsed, estimatedCost).catch((err) => {
       logger.warn(`[aiClient] Failed to track usage asynchronously: ${(err as Error).message}`);
     });
 
-    return { content, provider: config.provider, model, tokensUsed, estimatedCost, rawResponse: data };
+    return { content, provider: config.provider, modelName: model, tokensUsed, estimatedCost, rawResponse: data };
   }
 
   // ─── Usage tracking ───────────────────────────────────────────────────────

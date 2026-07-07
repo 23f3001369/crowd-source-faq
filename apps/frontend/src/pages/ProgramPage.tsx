@@ -38,16 +38,21 @@ export default function ProgramPage() {
   const [openId, setOpenId] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
 
-  // v1.69 — if no slug, resolve the default program from the
-  // BatchContext (which auto-picks `isDefault: true` on cold start).
-  // The slug form (`/program/:slug`) hits the by-slug endpoint.
+  // Resolve the slug to a program. Three sources, in order:
+  //   1. The slug param directly (the URL is the source of truth)
+  //   2. The active program from ProgramContext (if no slug in URL)
+  //   3. The /api/programs/:slug endpoint — by-slug, returns the
+  //      program data even for archived/inactive programs so we never
+  //      404 an existing program.
   const effectiveSlug = useMemo<string | null>(() => {
     if (slug) return slug;
     if (currentBatch?.name) return slugifyProgramName(currentBatch.name);
     return null;
   }, [slug, currentBatch?.name]);
 
-  // Fetch the program + settings by slug (or by resolved default)
+  // Fetch the program + settings by slug (or by resolved default).
+  // The endpoint now accepts any program (active or archived), so a
+  // renamed program or an inactive one is still reachable.
   useEffect(() => {
     if (!effectiveSlug) return;
     const controller = new AbortController();

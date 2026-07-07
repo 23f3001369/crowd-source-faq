@@ -6,6 +6,67 @@ export default {
 
   theme: {
     extend: {
+      // ShadCN semantic colors — RGB triples, sourced from CSS variables
+      // defined in src/styles/index.css. Aliased to the Yaksha portfolio
+      // palette (warm sand accent on neutral monochrome surfaces) so
+      // ShadCN components render in-house by default.
+      colors: {
+        background: 'rgb(var(--background) / <alpha-value>)',
+        foreground: 'rgb(var(--foreground) / <alpha-value>)',
+        card: {
+          DEFAULT: 'rgb(var(--card) / <alpha-value>)',
+          foreground: 'rgb(var(--card-foreground) / <alpha-value>)',
+        },
+        popover: {
+          DEFAULT: 'rgb(var(--popover) / <alpha-value>)',
+          foreground: 'rgb(var(--popover-foreground) / <alpha-value>)',
+        },
+        primary: {
+          DEFAULT: 'rgb(var(--primary) / <alpha-value>)',
+          foreground: 'rgb(var(--primary-foreground) / <alpha-value>)',
+        },
+        secondary: {
+          DEFAULT: 'rgb(var(--secondary) / <alpha-value>)',
+          foreground: 'rgb(var(--secondary-foreground) / <alpha-value>)',
+        },
+        muted: {
+          DEFAULT: 'rgb(var(--muted) / <alpha-value>)',
+          foreground: 'rgb(var(--muted-foreground) / <alpha-value>)',
+        },
+        accent: {
+          DEFAULT: 'rgb(var(--accent) / <alpha-value>)',
+          foreground: 'rgb(var(--accent-foreground) / <alpha-value>)',
+        },
+        destructive: {
+          DEFAULT: 'rgb(var(--destructive) / <alpha-value>)',
+          foreground: 'rgb(var(--destructive-foreground) / <alpha-value>)',
+        },
+        border: 'rgb(var(--border) / <alpha-value>)',
+        input: 'rgb(var(--input) / <alpha-value>)',
+        ring: 'rgb(var(--ring) / <alpha-value>)',
+        chart: {
+          1: 'rgb(var(--chart-1) / <alpha-value>)',
+          2: 'rgb(var(--chart-2) / <alpha-value>)',
+          3: 'rgb(var(--chart-3) / <alpha-value>)',
+          4: 'rgb(var(--chart-4) / <alpha-value>)',
+          5: 'rgb(var(--chart-5) / <alpha-value>)',
+        },
+        sidebar: {
+          DEFAULT: 'rgb(var(--sidebar) / <alpha-value>)',
+          foreground: 'rgb(var(--sidebar-foreground) / <alpha-value>)',
+          primary: 'rgb(var(--sidebar-primary) / <alpha-value>)',
+          'primary-foreground': 'rgb(var(--sidebar-primary-foreground) / <alpha-value>)',
+          accent: 'rgb(var(--sidebar-accent) / <alpha-value>)',
+          'accent-foreground': 'rgb(var(--sidebar-accent-foreground) / <alpha-value>)',
+          border: 'rgb(var(--sidebar-border) / <alpha-value>)',
+          ring: 'rgb(var(--sidebar-ring) / <alpha-value>)',
+        },
+      },
+      borderRadius: {
+        lg: 'var(--radius)',
+        md: 'calc(var(--radius) - 2px)',
+        sm: 'calc(var(--radius) - 4px)',
+      },
       // ── Typography ──────────────────────────────────────────────
       // Matches UI project (vins/Frontend): Inter for body, DM Serif Display for headings
       fontFamily: {
@@ -20,6 +81,11 @@ export default {
       // declared in :root, dark overrides in [data-theme="dark"].
       // The /<alpha-value> placeholder lets Tailwind opacity modifiers
       // (bg-bg/82, text-ink/70, etc.) work for the core color tokens.
+      //
+      // Surface tokens (bg, surface, card) use the Yaksha portfolio
+      // neutral ramp (light: #F7F4EF → #FFFFFF → #FCFAF8; dark:
+      // #131313 → #191919 → #202020). Accent is the warm sand tone
+      // (light: #D6B78F / dark: #E4CFB3) — no green, teal, or blue.
       colors: {
         // Core neutrals — RGB triples for opacity support
         bg: 'rgb(var(--bg-primary-rgb) / <alpha-value>)',
@@ -37,7 +103,7 @@ export default {
           faint: 'rgb(var(--text-muted-rgb) / <alpha-value>)',
         },
 
-        // Primary accent (warm sage in light, deep green in dark)
+        // Primary accent (warm sand — Yaksha portfolio palette).
         accent: {
           DEFAULT: 'rgb(var(--accent-rgb) / <alpha-value>)',
           hover: 'rgb(var(--accent-hover-rgb) / <alpha-value>)',
@@ -60,7 +126,8 @@ export default {
           light: 'var(--danger-bg)',
         },
 
-        // Legacy sage kept for backward compatibility (will phase out)
+        // Legacy sage Tailwind palette — kept for backward compatibility
+        // with older components. New code should use `accent` instead.
         sage: {
           50:  '#f4f7f4',
           100: '#e2ece2',
@@ -97,7 +164,7 @@ export default {
 
       // ── Box Shadows ─────────────────────────────────────────────
       // Per-theme — light uses soft black drop shadows, dark uses
-      // diffused dark shadows with optional green glow on hover.
+      // diffused dark shadows with optional warm sand glow on hover.
       // Values resolve from CSS variables in src/styles/index.css.
       boxShadow: {
         'subtle': 'var(--shadow-subtle)',

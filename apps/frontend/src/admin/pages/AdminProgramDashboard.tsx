@@ -20,6 +20,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import adminApi from '../utils/adminApi';
 import { useBatch } from '../../context/BatchContext';
 import { CardSkeleton } from '../../components/explore/ExploreSkeleton';
+import CreateProgramModal from '../components/program/CreateProgramModal';
 
 interface ProgramListItem {
   _id: string;
@@ -43,9 +44,9 @@ interface ToastState { msg: string; type: 'success' | 'error' | 'info'; }
 
 function StatPill({ label, value, tone }: { label: string; value: number | string; tone?: 'green' | 'amber' | 'red' | 'neutral' }) {
   const palette = {
-    green:  'bg-emerald-50 text-emerald-700 border-emerald-200',
-    amber:  'bg-amber-50 text-amber-700 border-amber-200',
-    red:    'bg-rose-50 text-rose-700 border-rose-200',
+    green:  'bg-accent/10 text-accent border-accent/30',
+    amber:  'bg-warning/10 text-warning border-warning/30',
+    red:    'bg-danger/10 text-danger border-danger/30',
     neutral:'bg-mist text-ink-soft border-border/60',
   } as const;
   return (
@@ -83,9 +84,9 @@ function ProgramCard({ p, onOpen }: { p: ProgramListItem; onOpen: (id: string) =
             </span>
           )}
           <span className={`text-[10px] font-medium uppercase tracking-wider px-1.5 py-0.5 rounded ${
-            statusTone === 'green'  ? 'bg-emerald-100 text-emerald-700' :
-            statusTone === 'amber'  ? 'bg-amber-100 text-amber-700' :
-            statusTone === 'red'    ? 'bg-rose-100 text-rose-700' :
+            statusTone === 'green'  ? 'bg-accent/15 text-accent' :
+            statusTone === 'amber'  ? 'bg-warning/15 text-warning' :
+            statusTone === 'red'    ? 'bg-danger/15 text-danger' :
                                       'bg-mist text-ink-soft'
           }`}>
             {p.status}
@@ -119,6 +120,7 @@ export default function AdminProgramDashboard(): React.ReactElement {
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastState | null>(null);
   const [filter, setFilter] = useState<'all' | 'active' | 'draft' | 'archived' | 'completed'>('all');
+  const [createOpen, setCreateOpen] = useState(false);
 
   
 
@@ -164,15 +166,27 @@ export default function AdminProgramDashboard(): React.ReactElement {
     void navigate(`/admin/programs/${id}`);
   };
 
+  // v1.69 — multi-program provisioning: after a successful create, the
+  // backend has already provisioned ProgramConfig, ProgramSettings, and
+  // per-program FeatureFlag overrides. We land the admin on the new
+  // program's detail view so they can immediately start populating it
+  // (FAQs, categories, welcome kit, Zoom, etc.).
+  const handleCreated = (batch: { _id: string; name: string }): void => {
+    setToast({ msg: `Created "${batch.name}". Provisioned workspace ready.`, type: 'success' });
+    void load();
+    void refreshBatches();
+    void navigate(`/admin/programs/${batch._id}`);
+  };
+
   return (
     <div className="space-y-5">
       {toast && (
         <motion.div
           initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
           className={`fixed top-4 right-4 z-50 px-4 py-2.5 rounded-lg text-xs font-medium border ${
-            toast.type === 'error' ? 'bg-rose-50 text-rose-700 border-rose-200' :
-            toast.type === 'info'  ? 'bg-blue-50 text-blue-700 border-blue-200' :
-                                     'bg-emerald-50 text-emerald-700 border-emerald-200'
+            toast.type === 'error' ? 'bg-danger/10 text-danger border-danger/30' :
+            toast.type === 'info'  ? 'bg-accent/10 text-accent border-accent/30' :
+                                     'bg-accent/10 text-accent border-accent/30'
           }`}
         >
           {toast.msg}
@@ -202,6 +216,14 @@ export default function AdminProgramDashboard(): React.ReactElement {
           >
             Manage courses
           </Link>
+          <button
+            type="button"
+            onClick={() => setCreateOpen(true)}
+            className="admin-btn-primary text-xs"
+            data-testid="create-program-button"
+          >
+            + Create program
+          </button>
         </div>
       </div>
 
@@ -228,7 +250,7 @@ export default function AdminProgramDashboard(): React.ReactElement {
       </div>
 
       {error && (
-        <div className="rounded-2xl border border-rose-200 bg-rose-50 p-6 text-sm text-rose-700">
+        <div className="rounded-2xl border border-danger/30 bg-danger-light p-6 text-sm text-danger">
           {error} <button type="button" onClick={() => { void load(); }} className="underline ml-2">Retry</button>
         </div>
       )}
@@ -241,7 +263,7 @@ export default function AdminProgramDashboard(): React.ReactElement {
         <div className="rounded-2xl border border-dashed border-border bg-card/40 p-12 text-center">
           <p className="text-sm text-ink-soft">
             {filter === 'all'
-              ? 'No programs yet. Run the seed script to bootstrap the default program.'
+              ? 'No programs yet. Click "+ Create program" above to provision a new workspace.'
               : `No programs with status "${filter}".`}
           </p>
         </div>
@@ -257,6 +279,12 @@ export default function AdminProgramDashboard(): React.ReactElement {
         Tip: {availableBatches.length} program{availableBatches.length === 1 ? '' : 's'} in the
         public-facing BatchSwitcher. Click any card to open the per-program detail view.
       </p>
+
+      <CreateProgramModal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreated={handleCreated}
+      />
     </div>
   );
 }

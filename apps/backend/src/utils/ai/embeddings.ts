@@ -9,6 +9,7 @@ import mongoose, { Types } from 'mongoose';
 import OpenAI from 'openai';
 import AiConfig from '../../modules/ai/ai-config.model.js';
 import { getConfig } from '../../config/runtimeConfig.js';
+import { logAiApiSuccess, logAiApiFailure } from './apiUsageLog.js';
 import { logger } from '../http/logger.js';
 
 export const MODEL_SLUG = 'mxbai-embed-large';
@@ -47,15 +48,59 @@ async function callCustomEmbedding(text: string, apiKey: string, model: string, 
   // to avoid 'input length exceeds context length' errors on BERT models (max 512 tokens).
   const safeInput = text.length > 2000 ? text.slice(0, 2000) : text;
 
-  const response = await client.embeddings.create({
-    model,
-    input: safeInput,
-  });
-  
+  // v1.79 — log every external embedding call (success + failure)
+  // via the shared aiLog helper so admins can audit per-call.
+  const startedAt = Date.now();
+
+  let response;
+  try {
+    response = await client.embeddings.create({
+      model,
+      input: safeInput,
+    });
+  } catch (err) {
+    // OpenAI SDK errors expose `.status` for HTTP failures. Fall back
+    // to undefined when the error isn't an HTTP error (e.g. network).
+    const httpStatus = (err as { status?: number })?.status;
+    logAiApiFailure({
+      kind: 'embedding',
+      // Embeddings always go to a custom OpenAI-compatible endpoint
+      // (Ollama or admin-configured). Tag it 'custom' so the log
+      // doesn't masquerade as the canonical OpenAI provider.
+      provider: 'custom',
+      modelName: model,
+      feature: 'embeddings',
+      durationMs: Date.now() - startedAt,
+      error: (err as Error).message,
+      status: httpStatus,
+    });
+    throw err;
+  }
+
   const vec = response.data[0]?.embedding;
   if (!Array.isArray(vec)) {
-    throw new Error(`Embedding API returned unexpected shape: ${JSON.stringify(response).slice(0, 200)}`);
+    const err = `Embedding API returned unexpected shape: ${JSON.stringify(response).slice(0, 200)}`;
+    logAiApiFailure({
+      kind: 'embedding',
+      provider: 'custom',
+      modelName: model,
+      feature: 'embeddings',
+      durationMs: Date.now() - startedAt,
+      error: err,
+    });
+    throw new Error(err);
   }
+
+  logAiApiSuccess({
+    kind: 'embedding',
+    provider: 'custom',
+    modelName: model,
+    feature: 'embeddings',
+    durationMs: Date.now() - startedAt,
+    // Successful embedding responses don't include an HTTP status the
+    // SDK exposes — but we know it's 200, so record it explicitly.
+    httpStatus: 200,
+  });
 
   return normalizeL2(vec);
 }
@@ -69,7 +114,7 @@ function normalizeL2(vec: number[]): number[] {
 }
 
 // ── In-process local pipeline (disabled) ───────────────────────────────
-let isWarmed = false;
+const isWarmed = false;
 
 /** Warm up the embedding pipeline. */
 export const warmEmbedder = async (): Promise<void> => {
@@ -80,8 +125,26 @@ export const warmEmbedder = async (): Promise<void> => {
  * Generate an embedding for a DOCUMENT (FAQ, post, etc.).
  */
 export const generateEmbedding = async (text: string, options?: { batchId?: string | null }): Promise<number[]> => {
-  const { model, baseURL, apiKey } = await getActiveEmbeddingConfig(options?.batchId);
-  return callCustomEmbedding(text, apiKey, model, baseURL);
+  const { dimensions } = await getActiveEmbeddingConfig(options?.batchId);
+  try {
+    const { model, baseURL, apiKey } = await getActiveEmbeddingConfig(options?.batchId);
+    return await callCustomEmbedding(text, apiKey, model, baseURL);
+  } catch (err) {
+    // No embedding infrastructure configured → silently return a zero
+    // vector of the correct dimensionality. Callers decide what to do
+    // with it (duplicate detection filters via length match, retrieval
+    // is text-based and ignores embeddings entirely).
+    //
+    // In dev/test, surface the failure so missing config is loud.
+    if (process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development') {
+      logger.warn(`[embeddings] Custom embedding API failed, falling back to zero vector: ${(err as Error).message}`);
+    } else {
+      // Production: don't spam Discord. info-level so it lands in
+      // logs but not the alert channel. Sentry still gets it.
+      logger.info(`[embeddings] API unavailable, returning zero vector (dim=${dimensions})`);
+    }
+    return new Array(dimensions).fill(0);
+  }
 };
 
 /**

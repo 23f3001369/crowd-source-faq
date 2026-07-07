@@ -6,13 +6,13 @@ import ThreadDetail from '../components/community/ThreadDetail';
 import Button from '../components/ui/Button';
 import { CommunityDoodles } from '../components/ui/PageDoodles';
 import CommunityHealth from '../components/community/CommunityHealth';
-import api, { friendlyError } from '../utils/api';
+import api from '../utils/api';
 import { useAuth } from '../hooks/useAuth';
 import { useAuthGate } from '../context/AuthModalContext';
 import type { Post } from '../types/ui';
 
-// Modular dialog components
 import CreatePostDialog from '../components/community/CreatePostDialog';
+import { buttonCommunityAsk } from '../styles/style_config';
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 export default function CommunityPage() {
@@ -34,6 +34,7 @@ export default function CommunityPage() {
 
   const [filter, setFilter] = useState('all');
   const [sort, setSort] = useState('newest');
+  const [showAllPrograms, setShowAllPrograms] = useState(false);
   const [search, setSearch] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     return params.get('search') || '';
@@ -57,6 +58,7 @@ export default function CommunityPage() {
         limit: 20,
         filter,
         sort,
+        batchId: showAllPrograms ? 'all' : undefined,
         ...(reset ? {} : nextCursor ? { cursor: nextCursor } : {}),
       },
     })
@@ -72,7 +74,7 @@ export default function CommunityPage() {
         setLoading(false);
         setLoadingMore(false);
       });
-  }, [filter, sort, nextCursor]);
+  }, [filter, sort, nextCursor, showAllPrograms]);
 
   // Thread detail: when a post ID is set, show ThreadDetail instead of the list/dialog
   const handleOpenThread = useCallback((postId: string) => {
@@ -123,73 +125,21 @@ export default function CommunityPage() {
       }
       window.history.replaceState({}, '', window.location.pathname);
     }
-  }, [posts, user, window.location.search]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    fetchPosts(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filter, sort]);
+  }, [posts, user, window.location.search]);
 
   // Reset cursor + posts when filter/sort changes so we paginate the
   // newly-filtered set from the beginning.
   useEffect(() => {
     setNextCursor(null);
     setPosts([]);
-  }, [filter, sort]);
+  }, [filter, sort, showAllPrograms]);
 
-  // ── Infinite scroll — fetch the next page when the sentinel enters view ────
-  const sentinelRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (!sentinelRef.current) return;
-    if (!hasMore || loading || loadingMore) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0]?.isIntersecting) {
-          fetchPosts(false);
-        }
-      },
-      { rootMargin: '300px 0px' } // start loading 300px before the sentinel
-    );
-    observer.observe(sentinelRef.current);
-    return () => observer.disconnect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasMore, loading, loadingMore, nextCursor, filter, sort]);
-
-  const runSemanticSearch = useCallback(async (q: string) => {
-    setSearchLoading(true);
-    try {
-      const res = await api.get<{ results: Post[] }>('/community/search', { params: { q } });
-      setSearchResults(res.data.results || []);
-    } catch (err) {
-      console.error(friendlyError(err, 'Failed to load posts.'));
-      setSearchResults([]);
-    } finally {
-      setSearchLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    const q = search.trim();
-    if (!q || q.length < 3) {
-      setSearchResults([]);
-      return;
-    }
-    const timer = setTimeout(() => {
-      runSemanticSearch(q);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [search, runSemanticSearch]);
-
-  // Show success toast when a manual sync completes
-  useEffect(() => {
-    if (!loading && syncing) {
-      setSyncing(false);
-      setToast('Community content synced');
-      setTimeout(() => setToast(''), 2500);
-    }
-  }, [loading, syncing]);
-
+  // 2-D (MEDIUM) — previously this page had TWO effects both keyed on
+  // [filter, sort, ...] that each fired `fetchPosts(true)` in the same
+  // React commit, racing against each other. The earlier one (above)
+  // handled showAllPrograms, this one below handled the search-active
+  // branch. Merge them into one effect whose body is the union of
+  // both branches, removing the duplicate dispatch.
   // When filter or sort changes — refresh posts (if no search active) or re-filter existing results
   useEffect(() => {
     if (search.trim()) {
@@ -208,7 +158,60 @@ export default function CommunityPage() {
       return;
     }
     fetchPosts(true);
-  }, [filter, sort]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [filter, sort, showAllPrograms]);
+
+  // ── Infinite scroll — fetch the next page when the sentinel enters view ────
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!sentinelRef.current) return;
+    if (!hasMore || loading || loadingMore) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          fetchPosts(false);
+        }
+      },
+      { rootMargin: '300px 0px' } // start loading 300px before the sentinel
+    );
+    observer.observe(sentinelRef.current);
+    return () => observer.disconnect();
+  }, [hasMore, loading, loadingMore, nextCursor, filter, sort, showAllPrograms]);
+
+  const runSemanticSearch = useCallback(async (q: string) => {
+    setSearchLoading(true);
+    try {
+      const res = await api.get<{ results: Post[] }>('/community/search', {
+        params: { q, batchId: showAllPrograms ? 'all' : undefined }
+      });
+      setSearchResults(res.data.results || []);
+    } catch (err) {
+      console.error('Failed to load posts:', err);
+      setSearchResults([]);
+    } finally {
+      setSearchLoading(false);
+    }
+  }, [showAllPrograms]);
+
+  // v2 — search is now Enter-only. We still keep the trimmed query handy
+  // for downstream effects (filter/sort re-apply on existing results).
+  // The auto-fire debounce was removed so results don't pop while the user
+  // is still typing.
+  useEffect(() => {
+    const q = search.trim();
+    if (!q || q.length < 3) {
+      setSearchResults([]);
+    }
+  }, [search]);
+
+  // Show success toast when a manual sync completes
+  useEffect(() => {
+    if (!loading && syncing) {
+      setSyncing(false);
+      setToast('Community content synced');
+      setTimeout(() => setToast(''), 2500);
+    }
+  }, [loading, syncing]);
 
   const handlePostCreated = (newPost: Post) => {
     setPosts((prev) => [newPost, ...prev]);
@@ -285,7 +288,7 @@ export default function CommunityPage() {
             <button
               id="ask-question-btn"
               onClick={handleAskQuestion}
-              className="btn-community-ask"
+              className={buttonCommunityAsk}
               aria-label="Ask a question"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -355,23 +358,34 @@ export default function CommunityPage() {
           </div>
         )}
 
-        {!loading && !error && total > 0 && (
+        {!loading && !error && (
           <div className="flex items-center justify-between gap-3 mb-5 flex-wrap">
-            <div className="flex gap-1 p-1 bg-mist rounded-xl w-fit">
-              {[
-                { key: 'all', label: 'All' },
-                { key: 'unanswered', label: 'Unanswered' },
-                { key: 'open', label: 'Open' },
-              ].map(({ key, label }) => (
-                <button
-                  key={key}
-                  onClick={() => setFilter(key)}
-                  className={`px-4 py-1.5 rounded-lg text-xs font-medium transition-all duration-200
-                    ${filter === key ? 'bg-card text-ink shadow-subtle' : 'text-ink-soft hover:text-ink'}`}
-                >
-                  {label}
-                </button>
-              ))}
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex gap-1 p-1 bg-mist rounded-xl w-fit">
+                {[
+                  { key: 'all', label: 'All' },
+                  { key: 'unanswered', label: 'Unanswered' },
+                  { key: 'open', label: 'Open' },
+                ].map(({ key, label }) => (
+                  <button
+                    key={key}
+                    onClick={() => setFilter(key)}
+                    className={`px-4 py-1.5 rounded-lg text-xs font-medium transition-all duration-200
+                      ${filter === key ? 'bg-card text-ink shadow-subtle' : 'text-ink-soft hover:text-ink'}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              <select
+                value={showAllPrograms ? 'all' : 'active'}
+                onChange={(e) => setShowAllPrograms(e.target.value === 'all')}
+                className="px-3 py-1.5 rounded-xl border border-border bg-card text-xs text-ink-soft focus:outline-none focus:ring-2 focus:ring-accent/25 cursor-pointer"
+              >
+                <option value="active">Active Program Feed</option>
+                <option value="all">All Programs Feed</option>
+              </select>
             </div>
 
             <select
@@ -438,7 +452,7 @@ export default function CommunityPage() {
                 key={post._id}
                 post={post}
                 onClick={(p) => handleOpenThread(p._id)}
-                currentUserId={user?._id || (user?.id as string | undefined)}
+                currentUserId={user?._id}
               />
             ))}
           </div>
@@ -469,9 +483,13 @@ export default function CommunityPage() {
 
       <Footer />
 
-      {/* Thread detail — full-page overlay replaces the list view */}
+      {/* Thread detail — full-page overlay replaces the list view.
+          z-30 (below the navbar's z-50) so the navbar floats on top of
+          the page-cover background. The inner modal at z-[60] escapes
+          this stacking context via its higher z-index and sits above
+          the navbar. */}
       {selectedPostId && (
-        <div className="fixed inset-0 z-40 bg-bg overflow-y-auto">
+        <div className="fixed inset-0 z-30 bg-bg overflow-y-auto">
           <ThreadDetail
             postId={selectedPostId}
             onClose={handleCloseDetail}

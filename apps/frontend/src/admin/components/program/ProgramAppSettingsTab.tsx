@@ -16,6 +16,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import adminApi from '../../utils/adminApi';
+import { badgePendingReview, dangerBorder } from '../../../styles/style_config';
 
 interface ProgramAppSettings {
   goldenTicketCooldownHours: number;
@@ -78,7 +79,7 @@ function SettingRow<K extends keyof ProgramAppSettings>({
           <div className="flex items-center gap-2 mb-0.5">
             <p className="text-sm font-semibold text-ink">{SETTING_LABELS[settingKey]}</p>
             {dirty && (
-              <span className="text-[9px] font-semibold uppercase tracking-wider text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-1.5 py-0.5">
+              <span className={badgePendingReview}>
                 Unsaved
               </span>
             )}
@@ -115,7 +116,7 @@ function SettingRow<K extends keyof ProgramAppSettings>({
         />
       </div>
       {invalid && (
-        <p className="text-[10px] text-rose-700 mt-1">
+        <p className="text-[10px] text-danger mt-1">
           Value must be between {SETTING_MIN[settingKey]} and {SETTING_MAX[settingKey]}.
         </p>
       )}
@@ -194,7 +195,7 @@ export default function ProgramAppSettingsTab({ programId }: { programId: string
   }
   if (error || !draft || !saved) {
     return (
-      <div className="rounded-2xl border border-rose-200 bg-rose-50 p-6 text-sm text-rose-700">
+      <div className={`${dangerBorder} rounded-2xl p-6 text-sm`}>
         {error ?? 'Failed to load settings.'}{' '}
         <button type="button" onClick={() => { void load(); }} className="underline">Retry</button>
       </div>
@@ -212,11 +213,7 @@ export default function ProgramAppSettingsTab({ programId }: { programId: string
       {toast && (
         <motion.div
           initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-          className={`px-4 py-2.5 rounded-lg text-xs font-medium border ${
-            toast.type === 'error'
-              ? 'bg-rose-50 text-rose-700 border-rose-200'
-              : 'bg-emerald-50 text-emerald-700 border-emerald-200'
-          }`}
+          className={`${toast.type === 'error' ? dangerBorder : 'bg-accent/10 text-accent border-accent/30 px-4 py-2.5 rounded-lg text-xs font-medium border'}`}
         >
           {toast.msg}
         </motion.div>
@@ -234,7 +231,7 @@ export default function ProgramAppSettingsTab({ programId }: { programId: string
           </div>
           <span className={`text-[10px] font-medium uppercase tracking-wider rounded-md px-2 py-0.5 border ${
             hasAnyOverride
-              ? 'text-emerald-700 bg-emerald-50 border-emerald-200'
+              ? 'text-accent bg-accent/10 border-accent/30'
               : 'text-ink-faint bg-mist border-border/60'
           }`}>
             {hasAnyOverride ? '✓ Per-program overrides active' : 'Falling back to global'}

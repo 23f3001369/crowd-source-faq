@@ -9,15 +9,24 @@ import SpurtiChip from './SpurtiChip';
 import ZoomBubble from '../welcome/ZoomBubble';
 import { BatchSwitcher } from './BatchSwitcher';
 import { NavPills, useNavItems } from './NavPills';
+import logoWide from '../../assets/logo-wide.png';
+import {
+  avatarColorDefault,
+  avatarColorPalette,
+  navHamburger,
+  navMobileLinkActive,
+  navMobileLinkBase,
+  navMobileLinkIdle,
+  navSecondaryLinkBase,
+} from '../../styles/style_config';
 
 function getAvatarColor(name?: string): string {
-  if (!name) return '#6b92e0';
+  if (!name) return avatarColorDefault;
   let hash = 0;
   for (let i = 0; i < name.length; i++) {
     hash = name.charCodeAt(i) + ((hash << 5) - hash);
   }
-  const colors = ['#6b92e0', '#5a9a6b', '#c4943a', '#e07c6b', '#7c6be0', '#e06ba8'];
-  return colors[Math.abs(hash) % colors.length];
+  return avatarColorPalette[Math.abs(hash) % avatarColorPalette.length];
 }
 
 
@@ -30,7 +39,7 @@ function applyTheme(theme: Theme) {
   document.documentElement.setAttribute('data-theme', t);
   try {
     localStorage.setItem('theme', theme);
-  } catch {}
+  } catch { void 0 }
 }
 
 export default function Navbar({ showProgramSwitcher: _showProgramSwitcher = false, isAdminView = false }: { showProgramSwitcher?: boolean, isAdminView?: boolean } = {}) {
@@ -132,20 +141,13 @@ export default function Navbar({ showProgramSwitcher: _showProgramSwitcher = fal
       >
 
         {/* Logo */}
-        <div className="flex items-center justify-self-start">
+        <div className="flex items-center justify-self-start min-w-[140px] flex-shrink-0">
           <NavLink to="/" className="flex items-center gap-2.5 group w-fit">
-            <div className="w-9 h-9 rounded-[10px] border-2 border-ink text-ink flex items-center justify-center transition-transform duration-300 group-hover:rotate-[-6deg] bg-[rgb(var(--bg-card-rgb)_/_0.5)]">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="10"/>
-                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
-                <line x1="12" y1="17" x2="12.01" y2="17"/>
-              </svg>
-            </div>
-            {!isAdminView && (
-              <span className="font-sans font-bold tracking-tight text-ink text-xl">
-                Yaksha FAQ
-              </span>
-            )}
+            <img
+              src={logoWide}
+              alt="Yaksha FAQ"
+              className="h-10 sm:h-12 w-auto object-contain transition-transform duration-300 group-hover:scale-[1.02]"
+            />
           </NavLink>
         </div>
 
@@ -183,14 +185,14 @@ export default function Navbar({ showProgramSwitcher: _showProgramSwitcher = fal
                   <ZoomBubble />
                   {/* Spurti Points chip */}
                   <SpurtiChip />
-                  {user?.role === 'admin' && (
-                    <BatchSwitcher showCreateLink={true} className="hidden md:inline-flex" />
+                  {isAuthenticated && (
+                    <BatchSwitcher showCreateLink={user?.role === 'admin'} className="hidden md:inline-flex" />
                   )}
 
                   <NotificationBell />
 
                   {/* User Avatar + Dropdown */}
-                  <div className="relative" ref={profileRef}>
+                  <div data-tour="user-profile" className="relative" ref={profileRef}>
                       <button
                         onClick={(e) => { e.stopPropagation(); setProfileOpen(!profileOpen); }}
                         className="flex items-center gap-1.5 cursor-pointer group"
@@ -299,7 +301,7 @@ export default function Navbar({ showProgramSwitcher: _showProgramSwitcher = fal
           {/* Mobile hamburger */}
           <button
             onClick={() => setMobileOpen(!mobileOpen)}
-            className="lg:hidden flex w-9 h-9 items-center justify-center rounded-[10px] hover:bg-black/[0.04] transition-colors"
+            className={navHamburger}
             aria-label="Toggle menu"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -347,10 +349,10 @@ export default function Navbar({ showProgramSwitcher: _showProgramSwitcher = fal
               end={to === '/'}
               onClick={() => setMobileOpen(false)}
               className={({ isActive }) =>
-                `block px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 ${
+                `${navMobileLinkBase} ${
                   isActive
-                    ? 'bg-accent-light text-accent'
-                    : 'text-ink-soft hover:text-ink hover:bg-black/[0.03]'
+                    ? navMobileLinkActive
+                    : navMobileLinkIdle
                 }`
               }
             >
@@ -382,9 +384,7 @@ export default function Navbar({ showProgramSwitcher: _showProgramSwitcher = fal
                 end
                 onClick={() => setMobileOpen(false)}
                 className={({ isActive }) =>
-                  `block px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 ${
-                    isActive ? 'bg-accent-light text-accent' : 'text-ink-soft hover:text-ink hover:bg-black/[0.03]'
-                  }`
+                  `${navSecondaryLinkBase} ${isActive ? navMobileLinkActive : navMobileLinkIdle}`
                 }
               >
                 Saved

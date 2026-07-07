@@ -11,13 +11,23 @@ interface ProviderOverride { hasKey: boolean; baseURL: string; model: string; }
 interface AiFeatureConfig { enabled: boolean; model: string; temperature: number; maxTokens: number; }
 interface EmbeddingConfig { provider: 'local' | 'huggingface' | 'openai' | 'custom'; model: string; dimensions: number; baseURL: string; hasKey: boolean; }
 interface AiConfig {
-  activeProvider: 'anthropic' | 'openai' | 'xai' | 'minimax' | 'gemini' | 'custom';
+  // Backend can return the sentinel 'none' when no provider has any key
+  // configured — this signals "system is unconfigured" rather than
+  // pretending one of the providers is active.
+  activeProvider: 'anthropic' | 'openai' | 'xai' | 'minimax' | 'gemini' | 'custom' | 'none';
   providers: { anthropic: ProviderOverride; openai: ProviderOverride; xai: ProviderOverride; minimax: ProviderOverride; gemini: ProviderOverride; custom: ProviderOverride; };
   features: { duplicateDetection: AiFeatureConfig; knowledgeExtraction: AiFeatureConfig; searchSummarization: AiFeatureConfig; faqGeneration: AiFeatureConfig; };
   embedding: EmbeddingConfig;
   usage: { totalRequests: number; totalEstimatedCost: number; lastResetAt: string; };
   isActive: boolean;
 }
+
+// Per-provider hasKey truth from /admin/ai/providers. This is the
+// authoritative source for "is the provider actually wired up" —
+// `isActive` alone only tells you which one is selected, not whether
+// it has a working API key. Previously the UI conflated the two and
+// showed "Configured ✓ Active" for unconfigured systems.
+type ProviderKeyStatus = Record<'anthropic' | 'openai' | 'xai' | 'minimax' | 'gemini' | 'custom', boolean>;
 
 const PROVIDER_META = {
   anthropic: {
@@ -26,7 +36,7 @@ const PROVIDER_META = {
     defaultModel: 'claude-sonnet-4-20250514',
     defaultBaseURL: 'https://api.anthropic.com/v1',
     docsUrl: 'https://console.anthropic.com/settings/keys',
-    badgeColor: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
+    badgeColor: 'bg-accent/10 text-accent border-accent/20',
     suggestedModels: ['claude-3-5-sonnet-latest', 'claude-3-5-haiku-latest', 'claude-3-opus-20240229', 'claude-sonnet-4-20250514']
   },
   openai:    {
@@ -53,7 +63,7 @@ const PROVIDER_META = {
     defaultModel: 'MiniMax-Text-01',
     defaultBaseURL: 'https://api.minimax.io/v1',
     docsUrl: 'https://platform.minimax.io',
-    badgeColor: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+    badgeColor: 'bg-accent/10 text-accent border-accent/20',
     suggestedModels: ['MiniMax-Text-01', 'abab6.5g', 'abab6.5-chat']
   },
   gemini:    {
@@ -62,7 +72,7 @@ const PROVIDER_META = {
     defaultModel: 'gemini-1.5-flash',
     defaultBaseURL: 'https://generativelanguage.googleapis.com/v1beta/openai',
     docsUrl: 'https://aistudio.google.com/app/apikey',
-    badgeColor: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20',
+    badgeColor: 'bg-accent/10 text-accent border-accent/20',
     suggestedModels: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-1.5-flash', 'gemini-1.5-pro']
   },
   custom:    {
@@ -95,6 +105,246 @@ function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (
   );
 }
 
+// Per-chat-provider edit form used by the unified Provider Settings card.
+// All four fields + health badge + test/save buttons live here, driven by
+// the provider selected in the parent card's dropdown.
+function ChatProviderFields({
+  provider, draft, setProviderDrafts, override, isActive, hasKey, monoInput,
+  saving, testing, testResult, onSwitchActive, onTest, onSave, onReveal, onClear,
+  savingProviderGlobal,
+}: {
+  provider: ProviderKey;
+  draft: { apiKey: string; baseURL: string; model: string; showKey: boolean; revealing: boolean };
+  setProviderDrafts: React.Dispatch<React.SetStateAction<Record<ProviderKey, any>>>;
+  override: { hasKey: boolean; baseURL?: string; model?: string } | undefined;
+  isActive: boolean;
+  hasKey: boolean;
+  monoInput: string;
+  saving: boolean;
+  testing: boolean;
+  testResult: { ok: boolean; message: string } | null;
+  onSwitchActive: (p: string) => void;
+  onTest: (p: string) => void;
+  onSave: (p: ProviderKey) => void;
+  onReveal: (p: ProviderKey) => void;
+  onClear: (p: ProviderKey) => void;
+  savingProviderGlobal: boolean;
+}) {
+  const meta = PROVIDER_META[provider];
+  const healthBadge = isActive
+    ? hasKey
+      ? { dot: 'bg-success', text: 'Configured', tone: 'text-success' }
+      : { dot: 'bg-danger', text: 'Active but no API key configured', tone: 'text-danger font-semibold' }
+    : { dot: 'bg-border-medium', text: 'Not active', tone: 'text-ink-faint' };
+
+  return (
+    <div className="space-y-4">
+      {/* Header: provider identity + health badge + switch-active button */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-2">
+          <span className={`w-2 h-2 rounded-full ${healthBadge.dot}`} />
+          <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold border ${meta.badgeColor}`}>{meta.label}</span>
+          <span className={`text-[11px] font-mono ${healthBadge.tone}`}>{healthBadge.text}</span>
+        </div>
+        {!isActive && (
+          <button type="button" onClick={() => onSwitchActive(provider)} disabled={savingProviderGlobal}
+            className="admin-btn-secondary px-3 py-1.5 text-xs disabled:opacity-50">
+            {savingProviderGlobal ? 'Switching…' : `Make ${meta.label} active`}
+          </button>
+        )}
+      </div>
+
+      {/* Two-column layout: API key + URL/model. Wider layout (max-w-5xl)
+          means we can fit everything without stacking. */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div>
+          <label className="flex items-center justify-between mb-1">
+            <span className="text-[10px] font-semibold text-ink-faint uppercase">API Key</span>
+            {override?.hasKey && (
+              <div className="flex items-center gap-2 text-[10px]">
+                <button type="button" onClick={() => onReveal(provider)} disabled={draft.revealing} className="text-accent hover:text-accent-hover font-medium disabled:opacity-50">
+                  {draft.revealing ? 'Revealing…' : draft.showKey ? 'Hide' : 'Reveal'}
+                </button>
+                <span className="text-border-medium">·</span>
+                <button type="button" onClick={() => onClear(provider)} disabled={saving} className="text-danger hover:text-danger/80 font-medium disabled:opacity-50">Clear</button>
+              </div>
+            )}
+          </label>
+          <input
+            type={draft.showKey ? 'text' : 'password'}
+            value={draft.apiKey}
+            onChange={e => setProviderDrafts(prev => ({ ...prev, [provider]: { ...prev[provider], apiKey: e.target.value, showKey: true } }))}
+            placeholder={override?.hasKey ? '•••••••••••••• (stored) — type to replace' : 'Paste your API key here…'}
+            autoComplete="off" className={monoInput} />
+          <p className="text-[10px] text-ink-faint mt-1">
+            Get a key: <a href={meta.docsUrl} target="_blank" rel="noreferrer" className="text-accent hover:underline">{meta.docsUrl.replace('https://','')}</a>
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-[10px] font-semibold text-ink-faint uppercase mb-1">Base URL <span className="text-[9px] font-normal">(optional)</span></label>
+          <input type="text" value={draft.baseURL}
+            onChange={e => setProviderDrafts(prev => ({ ...prev, [provider]: { ...prev[provider], baseURL: e.target.value } }))}
+            placeholder={meta.defaultBaseURL} className={monoInput} />
+          <p className="text-[10px] text-ink-faint mt-1">Proxy / gateway / OpenAI-compatible endpoint.</p>
+        </div>
+
+        <div>
+          <label className="block text-[10px] font-semibold text-ink-faint uppercase mb-1">Default Model <span className="text-[9px] font-normal">(optional)</span></label>
+          <input type="text" list={`suggested-models-${provider}`} value={draft.model}
+            onChange={e => setProviderDrafts(prev => ({ ...prev, [provider]: { ...prev[provider], model: e.target.value } }))}
+            placeholder={meta.defaultModel} className={monoInput} />
+          <datalist id={`suggested-models-${provider}`}>
+            {meta.suggestedModels.map(m => <option key={m} value={m} />)}
+          </datalist>
+        </div>
+      </div>
+
+      {/* Action row: test + result + save */}
+      <div className="pt-2 border-t border-border flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={() => onTest(provider)}
+            disabled={testing || !hasKey}
+            title={!hasKey ? 'Save an API key before testing the connection.' : undefined}
+            className="admin-btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed">
+            {testing ? <><span className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />Testing…</> : 'Test Connection'}
+          </button>
+          {testResult && (
+            <span className={`text-xs font-semibold ${testResult.ok ? 'text-success' : 'text-danger'}`}>
+              {testResult.ok ? '✓ Connected' : `✕ ${testResult.message}`}
+            </span>
+          )}
+        </div>
+        <button type="button" onClick={() => onSave(provider)} disabled={saving}
+          className="admin-btn-primary px-4 py-1.5 text-xs disabled:opacity-50">
+          {saving ? 'Saving…' : `Save ${meta.label}`}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Embedding model edit form. Same shape as ChatProviderFields but with
+// the embedding-specific fields (provider, dimensions, model, baseURL, key)
+// and the dimension-mismatch warning that fires when the draft dimensions
+// diverge from what the backend currently stores.
+function EmbeddingFields({
+  embeddingDraft, setEmbeddingDraft, config, monoInput, saving, testing, testResult, onTest, onSave,
+}: {
+  embeddingDraft: { provider: 'local' | 'huggingface' | 'openai' | 'custom'; model: string; dimensions: number; apiKey: string; baseURL: string; showKey: boolean; revealing: boolean };
+  setEmbeddingDraft: React.Dispatch<React.SetStateAction<any>>;
+  config: AiConfig | null;
+  monoInput: string;
+  saving: boolean;
+  testing: boolean;
+  testResult: { ok: boolean; message: string } | null;
+  onTest: () => void;
+  onSave: () => void;
+}) {
+  const requiresApi = embeddingDraft.provider !== 'local';
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <span className={`w-2 h-2 rounded-full ${config?.embedding?.hasKey ? 'bg-success' : 'bg-warning'}`} />
+        <span className="text-sm font-semibold text-ink">Embedding Model</span>
+        <span className="text-[11px] font-mono text-ink-faint">
+          {config?.embedding?.hasKey ? 'Configured' : 'Env / Local Default'}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div>
+          <label className="block text-[10px] font-semibold text-ink-faint uppercase mb-1">Embedding Provider</label>
+          <select value={embeddingDraft.provider}
+            onChange={e => setEmbeddingDraft((prev: any) => ({ ...prev, provider: e.target.value }))}
+            className="w-full px-3 py-2 rounded-lg text-xs border bg-bg-secondary text-ink focus:outline-none admin-input">
+            <option value="local">Local (In-Process)</option>
+            <option value="huggingface">HuggingFace Inference</option>
+            <option value="openai">OpenAI Embeddings</option>
+            <option value="custom">Custom OpenAI-Compatible</option>
+          </select>
+        </div>
+        <div>
+          <label className="block text-[10px] font-semibold text-ink-faint uppercase mb-1">Vector Dimensions</label>
+          <input type="number" value={embeddingDraft.dimensions}
+            onChange={e => setEmbeddingDraft((prev: any) => ({ ...prev, dimensions: parseInt(e.target.value) || 1024 }))}
+            className={monoInput} placeholder="1024" min="1" />
+        </div>
+        <div>
+          <label className="block text-[10px] font-semibold text-ink-faint uppercase mb-1">Model Name</label>
+          <input type="text" list="embedding-suggested-models" value={embeddingDraft.model}
+            onChange={e => setEmbeddingDraft((prev: any) => ({ ...prev, model: e.target.value }))}
+            placeholder="mixedbread-ai/mxbai-embed-large-v1" className={monoInput} />
+          <datalist id="embedding-suggested-models">
+            <option value="mixedbread-ai/mxbai-embed-large-v1" />
+            <option value="text-embedding-3-small" />
+            <option value="text-embedding-3-large" />
+            <option value="text-embedding-ada-002" />
+          </datalist>
+        </div>
+      </div>
+
+      {requiresApi && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-[10px] font-semibold text-ink-faint uppercase mb-1">Base URL</label>
+            <input type="text" value={embeddingDraft.baseURL}
+              onChange={e => setEmbeddingDraft((prev: any) => ({ ...prev, baseURL: e.target.value }))}
+              placeholder={
+                embeddingDraft.provider === 'huggingface' ? 'https://router.huggingface.co/hf-inference/models' :
+                embeddingDraft.provider === 'openai' ? 'https://api.openai.com/v1' : 'http://localhost:11434/v1'
+              } className={monoInput} />
+          </div>
+          <div>
+            <label className="flex items-center justify-between mb-1">
+              <span className="text-[10px] font-semibold text-ink-faint uppercase">API Key</span>
+              {config?.embedding?.hasKey && (
+                <div className="flex items-center gap-2 text-[10px]">
+                  <button type="button" onClick={() => setEmbeddingDraft((prev: any) => ({ ...prev, showKey: !prev.showKey }))} className="text-accent hover:text-accent-hover font-medium">
+                    {embeddingDraft.showKey ? 'Hide' : 'Reveal'}
+                  </button>
+                  <span className="text-border-medium">·</span>
+                  <button type="button" onClick={() => setEmbeddingDraft((prev: any) => ({ ...prev, apiKey: '' }))} className="text-danger hover:text-danger/80 font-medium">Clear</button>
+                </div>
+              )}
+            </label>
+            <input type={embeddingDraft.showKey ? 'text' : 'password'} value={embeddingDraft.apiKey}
+              onChange={e => setEmbeddingDraft((prev: any) => ({ ...prev, apiKey: e.target.value, showKey: true }))}
+              placeholder={config?.embedding?.hasKey ? '•••••••••••••• (stored) — type to replace' : 'Paste your API key here…'}
+              autoComplete="off" className={monoInput} />
+          </div>
+        </div>
+      )}
+
+      <div className="pt-2 border-t border-border flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={onTest} disabled={testing}
+            className="admin-btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5 disabled:opacity-50">
+            {testing ? <><span className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />Testing…</> : 'Test Connection'}
+          </button>
+          {testResult && (
+            <span className={`text-xs font-semibold ${testResult.ok ? 'text-success' : 'text-danger'}`}>
+              {testResult.ok ? '✓ Connected' : `✕ ${testResult.message}`}
+            </span>
+          )}
+        </div>
+        <button type="button" onClick={onSave} disabled={saving}
+          className="admin-btn-primary px-4 py-1.5 text-xs disabled:opacity-50">
+          {saving ? 'Saving…' : 'Save Embedding settings'}
+        </button>
+      </div>
+
+      {/* Vector Index Dimension Mismatch Warning */}
+      {config?.embedding && config.embedding.dimensions !== embeddingDraft.dimensions && (
+        <div className="p-3 bg-warning/10 border border-warning/30 rounded-xl text-xs text-warning space-y-1">
+          <p className="font-semibold">⚠️ Vector Dimension Change Detected</p>
+          <p>You changed dimensions from <strong>{config.embedding.dimensions}</strong> to <strong>{embeddingDraft.dimensions}</strong>. Run <code className="bg-warning/20 px-1 rounded">npm run create:vector-index -- --drop && npm run backfill:embeddings</code> to rebuild the MongoDB Search Index, or search queries will crash.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AdminAISettings() {
   // v1.69 — Phase 12: per-program AI config. When ?batchId=...
   // is supplied in the URL, every read/write targets the
@@ -105,6 +355,16 @@ export default function AdminAISettings() {
   const [searchParams, setSearchParams] = useSearchParams();
   const activeBatchId = searchParams.get('batchId');
   const { availableBatches, currentBatch: activeProgram } = useBatch();
+  // v1.71 — derive the displayed program name from the URL-selected
+  // activeBatchId (not from BatchContext), so the "Saving as per-program
+  // override for X" label always matches the scope button that's actually
+  // selected. Without this, BatchContext.currentBatch could be a stale
+  // value (e.g. user picked a different scope in another tab) and the
+  // label would mislead.
+  const selectedBatch = activeBatchId
+    ? availableBatches.find((b) => b._id === activeBatchId)
+    : undefined;
+  const displayedBatchName = selectedBatch?.name ?? activeProgram?.name;
 
   const [config, setConfig] = useState<AiConfig | null>(null);
   const [hasOverride, setHasOverride] = useState(true);
@@ -114,6 +374,18 @@ export default function AdminAISettings() {
   const [success, setSuccess] = useState('');
   const [hasChanges, setHasChanges] = useState(false);
   const [activeProvider, setActiveProvider] = useState<string>('anthropic');
+  // Which provider is currently being edited in the unified Provider
+  // Settings card. Drives the dropdown + the fields rendered below.
+  // Defaults to the active provider so the most-relevant config is
+  // always shown first. `'embedding'` is a special value that swaps
+  // the edit form into embedding-provider mode.
+  const [editingProvider, setEditingProvider] = useState<ProviderKey | 'embedding'>('anthropic');
+  // Per-provider hasKey truth, fetched from /admin/ai/providers. Used
+  // by the Provider Health card to surface "No API key" badges so an
+  // unconfigured provider is visibly distinct from a working one.
+  const [providerKeyStatus, setProviderKeyStatus] = useState<ProviderKeyStatus>({
+    anthropic: false, openai: false, xai: false, minimax: false, gemini: false, custom: false,
+  });
   const [features, setFeatures] = useState<AiConfig['features'] | null>(null);
   const [savingProvider, setSavingProvider] = useState(false);
   const [testingProvider, setTestingProvider] = useState<string | null>(null);
@@ -151,10 +423,18 @@ export default function AdminAISettings() {
 
   const loadConfig = useCallback(async () => {
     try {
-      const res = await adminApi.get<AiConfig & { hasOverride?: boolean; source?: string }>('/admin/ai/config', {
-        params: activeBatchId ? { batchId: activeBatchId } : undefined,
-      });
-      const data = res.data;
+      // Fetch config and per-provider hasKey in parallel. The config
+      // endpoint alone only tells us which provider is "active" — to
+      // know whether each provider actually has an API key we need the
+      // dedicated providers endpoint. Without this, the UI cannot
+      // distinguish a working provider from an unconfigured one.
+      const [configRes, providersRes] = await Promise.all([
+        adminApi.get<AiConfig & { hasOverride?: boolean; source?: string }>('/admin/ai/config', {
+          params: activeBatchId ? { batchId: activeBatchId } : undefined,
+        }),
+        adminApi.get<{ providers: Array<{ id: string; hasKey: boolean }> }>('/admin/ai/providers'),
+      ]);
+      const data = configRes.data;
       setConfig(data);
       setActiveProvider(data.activeProvider);
       setFeatures(data.features);
@@ -162,10 +442,16 @@ export default function AdminAISettings() {
       setProviderDrafts(prev => {
         const next = { ...prev };
         for (const p of ['anthropic','openai','xai','minimax','gemini','custom'] as ProviderKey[]) {
-          next[p] = { ...next[p], apiKey: '', baseURL: data.providers[p]?.baseURL ?? '', model: data.providers[p]?.model ?? '' };
+          next[p] = { ...next[p], apiKey: '' , baseURL: data.providers[p]?.baseURL ?? '', model: data.providers[p]?.model ?? '' };
         }
         return next;
       });
+      // Seed providerKeyStatus from the providers endpoint.
+      const status: ProviderKeyStatus = { anthropic: false, openai: false, xai: false, minimax: false, gemini: false, custom: false };
+      for (const p of providersRes.data.providers ?? []) {
+        if (p.id in status) status[p.id as keyof ProviderKeyStatus] = !!p.hasKey;
+      }
+      setProviderKeyStatus(status);
       if (data.embedding) {
         setEmbeddingDraft(prev => ({
           ...prev,
@@ -173,7 +459,7 @@ export default function AdminAISettings() {
           model: data.embedding.model || 'mixedbread-ai/mxbai-embed-large-v1',
           dimensions: data.embedding.dimensions || 1024,
           baseURL: data.embedding.baseURL || '',
-          apiKey: '',
+          apiKey: ''
         }));
       }
     } catch { setError('Failed to load AI configuration.'); }
@@ -216,6 +502,16 @@ export default function AdminAISettings() {
 
   const handleTestProvider = async (provider: string) => {
     setTestingProvider(provider); setTestResult(null);
+    // Pre-flight guard: if the provider has no API key configured,
+    // skip the network round-trip and surface a clean message. The
+    // backend now does the same check on its side, but doing it here
+    // saves the request entirely and gives the UI a stable, non-401
+    // error string to display.
+    if (!providerKeyStatus[provider as keyof ProviderKeyStatus]) {
+      setTestResult({ provider, ok: false, message: `No API key configured for ${provider}. Save a key first, then test.` });
+      setTestingProvider(null);
+      return;
+    }
     try { const res = await adminApi.get<{ ok: boolean; message: string }>('/admin/ai/providers/test', { params: { provider } }); setTestResult({ provider, ok: res.data.ok, message: res.data.message }); }
     catch (err: any) { setTestResult({ provider, ok: false, message: err.response?.data?.message || 'Connection failed' }); }
     finally { setTestingProvider(null); }
@@ -322,7 +618,7 @@ export default function AdminAISettings() {
 
   if (loading) {
     return (
-      <div className="space-y-4 max-w-3xl">
+      <div className="space-y-4 max-w-6xl">
         <div className="h-8 w-48 bg-mist rounded animate-pulse" />
         <div className="h-64 admin-card-surface animate-pulse" />
       </div>
@@ -333,7 +629,7 @@ export default function AdminAISettings() {
   const monoInput = 'w-full px-3 py-2 rounded-lg text-xs border bg-bg-secondary text-ink font-mono focus:outline-none transition-colors admin-input';
 
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div className="space-y-6 max-w-6xl">
       <p className="text-sm text-ink-faint -mt-2">Configure AI providers, API keys, custom endpoints, and per-feature parameters.</p>
 
       {/* v1.69 — Phase 12: per-program scope selector. When a
@@ -369,18 +665,18 @@ export default function AdminAISettings() {
           </button>
         ))}
         {activeBatchId && !hasOverride && (
-          <span className="text-[10px] font-medium uppercase tracking-wider text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-0.5">
+          <span className="text-[10px] font-medium uppercase tracking-wider text-warning bg-warning/10 border border-warning/30 rounded-md px-2 py-0.5">
             ⚠ No per-program override — falling back to global
           </span>
         )}
         {activeBatchId && hasOverride && (
-          <span className="text-[10px] font-medium uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-0.5">
+          <span className="text-[10px] font-medium uppercase tracking-wider text-accent bg-accent/10 border border-accent/30 rounded-md px-2 py-0.5">
             ✓ Per-program override active
           </span>
         )}
-        {activeProgram && activeBatchId && (
+        {displayedBatchName && activeBatchId && (
           <span className="text-[10px] text-ink-faint ml-auto">
-            Saving as per-program override for <span className="font-semibold text-ink">{activeProgram.name}</span>
+            Saving as per-program override for <span className="font-semibold text-ink">{displayedBatchName}</span>
           </span>
         )}
       </div>
@@ -420,246 +716,76 @@ export default function AdminAISettings() {
         </div>
       </div>
 
-      {/* ── Provider Credentials ─────────────────────────────────── */}
-      <div className="admin-card-surface">
-        <div className="admin-card-header bg-mist/40">
-          <p className="text-sm font-semibold text-ink">Provider Credentials & Endpoints</p>
-          <p className="text-xs text-ink-faint mt-0.5">Per-provider API keys are encrypted at rest. Leave any field blank to use the default.</p>
-        </div>
-        <div className="divide-y divide-border">
-          {(Object.keys(PROVIDER_META) as ProviderKey[]).map((provider) => {
-            const meta = PROVIDER_META[provider];
-            const draft = providerDrafts[provider];
-            const override = config?.providers[provider];
-            const isSaving = savingProviderDraft === provider;
-            return (
-              <div key={provider} className="p-5 space-y-3">
-                <div className="flex items-center gap-2">
-                  <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold border ${meta.badgeColor}`}>{meta.label}</span>
-                  {override?.hasKey ? (
-                    <span className="inline-flex items-center gap-1 text-[10px] text-success font-semibold"><span className="w-1.5 h-1.5 rounded-full bg-success" />Key stored</span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 text-[10px] text-ink-faint font-medium"><span className="w-1.5 h-1.5 rounded-full bg-border-medium" />No dashboard key (env var fallback)</span>
-                  )}
-                </div>
-
-                {/* API Key */}
-                <div>
-                  <label className="flex items-center justify-between mb-1">
-                    <span className="text-[10px] font-semibold text-ink-faint uppercase">API Key</span>
-                    {override?.hasKey && (
-                      <div className="flex items-center gap-2 text-[10px]">
-                        <button type="button" onClick={() => handleRevealApiKey(provider)} disabled={draft.revealing} className="text-accent hover:text-accent-hover font-medium disabled:opacity-50">{draft.revealing ? 'Revealing…' : draft.showKey ? 'Hide' : 'Reveal'}</button>
-                        <span className="text-border-medium">·</span>
-                        <button type="button" onClick={() => handleClearApiKey(provider)} disabled={isSaving} className="text-danger hover:text-danger/80 font-medium disabled:opacity-50">Clear</button>
-                      </div>
-                    )}
-                  </label>
-                  <input type={draft.showKey ? 'text' : 'password'} value={draft.apiKey}
-                    onChange={e => setProviderDrafts(prev => ({ ...prev, [provider]: { ...prev[provider], apiKey: e.target.value, showKey: true } }))}
-                    placeholder={override?.hasKey ? '•••••••••••••• (stored) — type to replace' : 'Paste your API key here…'}
-                    autoComplete="off" className={monoInput} />
-                  <p className="text-[10px] text-ink-faint mt-1">Get a key: <a href={meta.docsUrl} target="_blank" rel="noreferrer" className="text-accent hover:underline">{meta.docsUrl.replace('https://','')}</a></p>
-                </div>
-
-                {/* Base URL */}
-                <div>
-                  <label className="block text-[10px] font-semibold text-ink-faint uppercase mb-1">Base URL <span className="text-[9px] font-normal">(optional)</span></label>
-                  <input type="text" value={draft.baseURL} onChange={e => setProviderDrafts(prev => ({ ...prev, [provider]: { ...prev[provider], baseURL: e.target.value } }))} placeholder={meta.defaultBaseURL} className={monoInput} />
-                  <p className="text-[10px] text-ink-faint mt-1">Point at a proxy, self-hosted gateway, or OpenAI-compatible endpoint.</p>
-                </div>
-
-                {/* Model */}
-                <div>
-                  <label className="block text-[10px] font-semibold text-ink-faint uppercase mb-1">Default Model <span className="text-[9px] font-normal">(optional)</span></label>
-                  <input type="text" list={`suggested-models-${provider}`} value={draft.model} onChange={e => setProviderDrafts(prev => ({ ...prev, [provider]: { ...prev[provider], model: e.target.value } }))} placeholder={meta.defaultModel} className={monoInput} />
-                  <datalist id={`suggested-models-${provider}`}>
-                    {meta.suggestedModels.map(m => (
-                      <option key={m} value={m} />
-                    ))}
-                  </datalist>
-                </div>
-
-                <div className="flex justify-end pt-1">
-                  <button type="button" onClick={() => handleSaveProviderDraft(provider)} disabled={isSaving} className="admin-btn-primary px-4 py-1.5 text-xs">{isSaving ? 'Saving…' : `Save ${meta.label}`}</button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* ── Embedding Configuration ─────────────────────────────── */}
-      <div className="admin-card-surface border border-accent/20 bg-accent/5">
-        <div className="admin-card-header bg-accent/10 border-b border-accent/20">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-semibold text-accent">🧬 Embedding Model Configuration</p>
-              <p className="text-xs text-ink-faint mt-0.5">Manage semantic vector generation settings for search and duplicate detection.</p>
+  {/* ── Provider Settings (unified: chat providers + embedding) ───
+            Replaces the old "Provider Credentials" + "Embedding Configuration"
+            + "Provider Health" trio. The dropdown picks which provider to
+            edit; only the selected provider's fields render. Embedding is
+            a special value of the dropdown that swaps into embedding-mode
+            (provider + dimensions + model + baseURL + key). */}
+        <div className="admin-card-surface">
+          <div className="admin-card-header bg-mist/40 flex items-center justify-between gap-3">
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-ink">Provider Settings</p>
+              <p className="text-xs text-ink-faint mt-0.5">Edit API keys, endpoints, and test connections for any provider or the embedding model.</p>
             </div>
-            {config?.embedding?.hasKey ? (
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border bg-emerald-500/10 text-emerald-400 border-emerald-500/20">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />Configured
-              </span>
+            <div className="flex items-center gap-2 shrink-0">
+              <label className="text-[10px] font-semibold text-ink-faint uppercase">Editing</label>
+              <select
+                value={editingProvider}
+                onChange={e => {
+                  const v = e.target.value as ProviderKey | 'embedding';
+                  setEditingProvider(v);
+                  // Clear stale test result when switching providers so the
+                  // badge doesn't mislead the user about the new provider's
+                  // health.
+                  setTestResult(null);
+                  setEmbeddingTestResult(null);
+                }}
+                className="px-3 py-1.5 rounded-lg text-xs border bg-bg-secondary text-ink font-medium focus:outline-none admin-input min-w-[14rem]"
+              >
+                {(Object.keys(PROVIDER_META) as ProviderKey[]).map(k => (
+                  <option key={k} value={k}>{PROVIDER_META[k].label}</option>
+                ))}
+                <option value="embedding">— Embedding Model —</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="p-5">
+            {editingProvider === 'embedding' ? (
+              <EmbeddingFields
+                embeddingDraft={embeddingDraft}
+                setEmbeddingDraft={setEmbeddingDraft}
+                config={config}
+                monoInput={monoInput}
+                saving={savingEmbeddingDraft}
+                testing={testingEmbedding}
+                testResult={embeddingTestResult}
+                onTest={handleTestEmbedding}
+                onSave={handleSaveEmbeddingDraft}
+              />
             ) : (
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border bg-amber-500/10 text-amber-400 border-amber-500/20">
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />Env / Local Default
-              </span>
+              <ChatProviderFields
+                provider={editingProvider}
+                draft={providerDrafts[editingProvider]}
+                setProviderDrafts={setProviderDrafts}
+                override={config?.providers[editingProvider]}
+                isActive={activeProvider === editingProvider}
+                hasKey={providerKeyStatus[editingProvider]}
+                monoInput={monoInput}
+                saving={savingProviderDraft === editingProvider}
+                testing={testingProvider === editingProvider}
+                testResult={testResult?.provider === editingProvider ? testResult : null}
+                onSwitchActive={handleSwitchProvider}
+                onTest={handleTestProvider}
+                onSave={handleSaveProviderDraft}
+                onReveal={handleRevealApiKey}
+                onClear={handleClearApiKey}
+                savingProviderGlobal={savingProvider}
+              />
             )}
           </div>
         </div>
-        
-        <div className="p-5 space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* Embedding Provider */}
-            <div>
-              <label className="block text-[10px] font-semibold text-ink-faint uppercase mb-1">Embedding Provider</label>
-              <select
-                value={embeddingDraft.provider}
-                onChange={e => setEmbeddingDraft(prev => ({ ...prev, provider: e.target.value as any }))}
-                className="w-full px-3 py-2 rounded-lg text-xs border bg-bg-secondary text-ink focus:outline-none transition-colors admin-input"
-              >
-                <option value="local">Local (In-Process Transformers)</option>
-                <option value="huggingface">HuggingFace Inference API</option>
-                <option value="openai">OpenAI Embeddings API</option>
-                <option value="custom">Custom OpenAI-Compatible API</option>
-              </select>
-              <p className="text-[10px] text-ink-faint mt-1 font-sans">
-                {embeddingDraft.provider === 'local' && 'Runs locally using in-process ONNX model (no API key needed).'}
-                {embeddingDraft.provider === 'huggingface' && 'Calls HuggingFace model server. Requires HF API Key.'}
-                {embeddingDraft.provider === 'openai' && 'Calls OpenAI API. Requires dedicated OpenAI API key.'}
-                {embeddingDraft.provider === 'custom' && 'Calls custom endpoint (e.g. Ollama, vLLM, self-hosted API).'}
-              </p>
-            </div>
-
-            {/* Vector Dimensions */}
-            <div>
-              <label className="block text-[10px] font-semibold text-ink-faint uppercase mb-1">Vector Dimensions</label>
-              <input
-                type="number"
-                value={embeddingDraft.dimensions}
-                onChange={e => setEmbeddingDraft(prev => ({ ...prev, dimensions: parseInt(e.target.value) || 1024 }))}
-                className={monoInput}
-                placeholder="1024"
-                min="1"
-              />
-              <p className="text-[10px] text-ink-faint mt-1 font-sans">
-                Must match your MongoDB Search Index (default: 1024). OpenAI models support truncation.
-              </p>
-            </div>
-          </div>
-
-          {/* Model Name */}
-          <div>
-            <label className="block text-[10px] font-semibold text-ink-faint uppercase mb-1">Model Name / Slug</label>
-            <input
-              type="text"
-              list="embedding-suggested-models"
-              value={embeddingDraft.model}
-              onChange={e => setEmbeddingDraft(prev => ({ ...prev, model: e.target.value }))}
-              placeholder="mixedbread-ai/mxbai-embed-large-v1"
-              className={monoInput}
-            />
-            <datalist id="embedding-suggested-models">
-              <option value="mixedbread-ai/mxbai-embed-large-v1" />
-              <option value="text-embedding-3-small" />
-              <option value="text-embedding-3-large" />
-              <option value="text-embedding-ada-002" />
-            </datalist>
-            <p className="text-[10px] text-ink-faint mt-1 font-sans">
-              Model identifier used by the provider.
-            </p>
-          </div>
-
-          {/* Base URL (Conditionally shown for API providers) */}
-          {embeddingDraft.provider !== 'local' && (
-            <div>
-              <label className="block text-[10px] font-semibold text-ink-faint uppercase mb-1">Base URL / Endpoint URL</label>
-              <input
-                type="text"
-                value={embeddingDraft.baseURL}
-                onChange={e => setEmbeddingDraft(prev => ({ ...prev, baseURL: e.target.value }))}
-                placeholder={
-                  embeddingDraft.provider === 'huggingface' ? 'https://router.huggingface.co/hf-inference/models' :
-                  embeddingDraft.provider === 'openai' ? 'https://api.openai.com/v1' : 'http://localhost:11434/v1'
-                }
-                className={monoInput}
-              />
-              <p className="text-[10px] text-ink-faint mt-1 font-sans">
-                Custom endpoint gateway for the embedding provider.
-              </p>
-            </div>
-          )}
-
-          {/* API Key (Conditionally shown for API providers) */}
-          {embeddingDraft.provider !== 'local' && (
-            <div>
-              <label className="flex items-center justify-between mb-1">
-                <span className="text-[10px] font-semibold text-ink-faint uppercase">API Key</span>
-                {config?.embedding?.hasKey && (
-                  <div className="flex items-center gap-2 text-[10px]">
-                    <button type="button" onClick={handleRevealEmbeddingKey} disabled={embeddingDraft.revealing} className="text-accent hover:text-accent-hover font-medium disabled:opacity-50 font-sans">
-                      {embeddingDraft.revealing ? 'Revealing…' : embeddingDraft.showKey ? 'Hide' : 'Reveal'}
-                    </button>
-                    <span className="text-border-medium">·</span>
-                    <button type="button" onClick={handleClearEmbeddingKey} disabled={savingEmbeddingDraft} className="text-danger hover:text-danger/80 font-medium disabled:opacity-50 font-sans">Clear</button>
-                  </div>
-                )}
-              </label>
-              <input
-                type={embeddingDraft.showKey ? 'text' : 'password'}
-                value={embeddingDraft.apiKey}
-                onChange={e => setEmbeddingDraft(prev => ({ ...prev, apiKey: e.target.value, showKey: true }))}
-                placeholder={config?.embedding?.hasKey ? '•••••••••••••• (stored) — type to replace' : 'Paste your API key here…'}
-                autoComplete="off"
-                className={monoInput}
-              />
-            </div>
-          )}
-
-          {/* Action buttons + Warning Info Box */}
-          <div className="pt-2 border-t border-border flex items-center justify-between flex-wrap gap-3">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={handleTestEmbedding}
-                disabled={testingEmbedding}
-                className="admin-btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5 font-sans"
-              >
-                {testingEmbedding ? (
-                  <><span className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />Testing…</>
-                ) : 'Test Connection'}
-              </button>
-              {embeddingTestResult && (
-                <span className={`text-xs font-semibold font-sans ${embeddingTestResult.ok ? 'text-success' : 'text-danger'}`}>
-                  {embeddingTestResult.ok ? '✓ Connected' : `✕ ${embeddingTestResult.message}`}
-                </span>
-              )}
-            </div>
-            
-            <button
-              type="button"
-              onClick={handleSaveEmbeddingDraft}
-              disabled={savingEmbeddingDraft}
-              className="admin-btn-primary px-4 py-1.5 text-xs font-sans"
-            >
-              {savingEmbeddingDraft ? 'Saving…' : 'Save Embedding settings'}
-            </button>
-          </div>
-
-          {/* Vector Index Dimension Mismatch Warning Alert Box */}
-          {config?.embedding && config.embedding.dimensions !== embeddingDraft.dimensions && (
-            <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl text-xs text-amber-400 space-y-1 font-sans">
-              <p className="font-semibold">⚠️ Attention: Vector Dimension Change Detected</p>
-              <p>You have changed the dimensions from <strong>{config.embedding.dimensions}</strong> to <strong>{embeddingDraft.dimensions}</strong>.</p>
-              <p>To prevent search query crashes, you must drop/recreate the MongoDB Search Index and backfill all embeddings by running:</p>
-              <pre className="p-2 bg-black/40 rounded text-[10px] font-mono text-ink mt-1 select-all">
-                npm run create:vector-index -- --drop && npm run backfill:embeddings
-              </pre>
-            </div>
-          )}
-        </div>
-      </div>
 
       {/* ── Usage Statistics ─────────────────────────────────────── */}
       <div className="admin-card-surface">
@@ -694,6 +820,10 @@ export default function AdminAISettings() {
           <div className="divide-y divide-border">
             {(Object.keys(FEATURE_LABELS) as Array<keyof typeof FEATURE_LABELS>).map((feature) => {
               const f = features[feature];
+              // Defensive: if a feature key is missing from the API
+              // response (stale DB doc, partial update, etc.), skip the
+              // row instead of crashing the whole page.
+              if (!f) return null;
               return (
                 <div key={feature} className="p-5 space-y-3">
                   <div className="flex items-center justify-between">
@@ -734,35 +864,6 @@ export default function AdminAISettings() {
         )}
       </div>
 
-      {/* ── Provider Health ──────────────────────────────────────── */}
-      <div className="admin-card-surface">
-        <div className="admin-card-header bg-mist/40">
-          <p className="text-sm font-semibold text-ink">Provider Health</p>
-        </div>
-        <div className="p-5">
-          <div className="grid grid-cols-2 gap-3">
-            {(Object.keys(PROVIDER_META) as ProviderKey[]).map((key) => {
-              const isActive = activeProvider === key;
-              const isTesting = testingProvider === key;
-              const res = testResult?.provider === key ? testResult : null;
-              return (
-                <div key={key} className={`p-3 rounded-xl border transition-colors ${isActive ? 'border-accent bg-accent/5' : 'border-border'}`}>
-                  <div className="flex items-center gap-2">
-                    <div className={`w-2 h-2 rounded-full ${isActive ? 'bg-accent' : 'bg-border-medium'}`} />
-                    <p className="text-xs font-medium text-ink-soft">{PROVIDER_META[key].label}</p>
-                    {isActive && <span className="ml-auto text-[9px] font-bold text-accent uppercase tracking-wide">Active</span>}
-                  </div>
-                  <p className="text-[10px] text-ink-faint mt-1 font-mono">{isActive ? 'Configured' : 'Not active'}</p>
-                  {res && <p className={`text-[10px] mt-1.5 font-semibold ${res.ok ? 'text-success' : 'text-danger'}`}>{res.ok ? '✓ Connected' : `✕ ${res.message}`}</p>}
-                  <button onClick={() => handleTestProvider(key)} disabled={isTesting} className="mt-2 text-[10px] text-accent hover:text-accent-hover font-medium disabled:opacity-40 transition-colors flex items-center gap-1">
-                    {isTesting ? <><span className="w-3 h-3 border border-accent/30 border-t-accent rounded-full animate-spin inline-block" />Testing…</> : 'Test connection'}
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        </div>
       </div>
-    </div>
   );
 }

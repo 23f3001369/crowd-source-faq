@@ -16,6 +16,8 @@ import { Types } from 'mongoose';
 import DocumentInsight, { type IDocumentInsight } from '../modules/knowledge/document-insight.model.js';
 import FAQ from '../modules/faq/faq.model.js';
 import { logger } from './http/logger.js';
+import { invalidatePublicCaches } from '../modules/faq/public-faq.controller.js';
+import { invalidateCache } from './http/cache.js';
 
 export interface PromoteResult {
   insight: IDocumentInsight;
@@ -54,6 +56,7 @@ export async function promoteInsightToFaq(
   const faq = await FAQ.create({
     question: fallbackQuestion,
     answer: insight.answer_or_content,
+    batchId: insight.batchId,
     // Carry the LLM-generated structural metadata forward so it powers
     // FAQ search/RAG retrieval (tags feed the FAQ text index; category
     // feeds faceting). Falls back to safe defaults for legacy insights.
@@ -79,6 +82,9 @@ export async function promoteInsightToFaq(
   insight.reviewedBy = reviewedByUserId ?? null;
   insight.reviewedAt = new Date();
   await insight.save();
+
+  await invalidateCache();
+  invalidatePublicCaches();
 
   logger.info(
     `[documentPromotion] ${source} promoted insight ${insight._id} → FAQ ${faq._id} (type=${(insight as { type?: string }).type ?? 'FAQ'})`,

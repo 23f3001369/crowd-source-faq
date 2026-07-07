@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import adminApi from '../utils/adminApi';
 import { useBodyScrollLock } from '../../hooks/useBodyScrollLock';
 import { timeAgo } from '../../utils/time';
+import { modalBackdrop } from '../../styles/style_config';
 
 interface BannedUser { _id: string; name: string; email: string; banReason?: string; bannedAt?: string; tier: string; points: number; }
 interface SuspendedUser { _id: string; name: string; email: string; suspendedUntil?: string; tier: string; points: number; }
@@ -101,7 +102,7 @@ export default function AdminModeration() {
     if (tab === 'users') setPage(1);
   };
 
-  const doAction = async (fn: () => Promise<void>) => { try { await fn(); fetchQueue(); } catch {} };
+  const doAction = async (fn: () => Promise<void>) => { try { await fn(); fetchQueue(); } catch { void 0 } };
 
   const handleUnban    = (id: string) => doAction(async () => { await adminApi.post('/moderation/unban', { userId: id }); });
   const handleUnsuspend = (id: string) => doAction(async () => { await adminApi.post('/moderation/unsuspend', { userId: id }); });
@@ -290,7 +291,7 @@ export default function AdminModeration() {
 
       {/* Dismiss Modal */}
       {dismissModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setDismissModal(null)}>
+        <div className={modalBackdrop} onClick={() => setDismissModal(null)}>
           <div className="w-full max-w-sm admin-modal-panel" onClick={e => e.stopPropagation()}>
             <div className="admin-modal-header"><p className="text-sm font-semibold text-ink">Dismiss Escalation</p></div>
             <div className="admin-modal-body space-y-3">
@@ -310,7 +311,7 @@ export default function AdminModeration() {
 
       {/* H22 — Resolve Modal (replaces window.prompt). */}
       {resolveModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setResolveModal(null)}>
+        <div className={modalBackdrop} onClick={() => setResolveModal(null)}>
           <div className="w-full max-w-sm admin-modal-panel" onClick={e => e.stopPropagation()}>
             <div className="admin-modal-header"><p className="text-sm font-semibold text-ink">Resolve Escalation</p></div>
             <div className="admin-modal-body space-y-3">
@@ -346,7 +347,7 @@ export default function AdminModeration() {
 
       {/* Warn Modal */}
       {warnModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setWarnModal(null)}>
+        <div className={modalBackdrop} onClick={() => setWarnModal(null)}>
           <div className="w-full max-w-sm admin-modal-panel" onClick={e => e.stopPropagation()}>
             <div className="admin-modal-header"><p className="text-sm font-semibold text-ink">Warn {warnModal.name}</p></div>
             <div className="admin-modal-body space-y-3">
@@ -365,7 +366,7 @@ export default function AdminModeration() {
 
       {/* Suspend Modal */}
       {suspendModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setSuspendModal(null)}>
+        <div className={modalBackdrop} onClick={() => setSuspendModal(null)}>
           <div className="w-full max-w-sm admin-modal-panel" onClick={e => e.stopPropagation()}>
             <div className="admin-modal-header"><p className="text-sm font-semibold text-ink">Suspend {suspendModal.name}</p></div>
             <div className="admin-modal-body space-y-3">
@@ -393,7 +394,7 @@ export default function AdminModeration() {
 
       {/* Ban Modal */}
       {banModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setBanModal(null)}>
+        <div className={modalBackdrop} onClick={() => setBanModal(null)}>
           <div className="w-full max-w-sm admin-modal-panel" onClick={e => e.stopPropagation()}>
             <div className="admin-modal-header"><p className="text-sm font-semibold text-danger">Permanently Ban {banModal.name}</p></div>
             <div className="admin-modal-body space-y-3">

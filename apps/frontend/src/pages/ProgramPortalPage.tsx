@@ -193,7 +193,7 @@ export default function ProgramPortalPage() {
                           isLive
                             ? 'bg-accent/20 text-accent'
                             : isUpcoming
-                              ? 'bg-amber-100 text-amber-700'
+                              ? 'bg-warning/15 text-warning'
                               : 'bg-mist text-ink-faint'
                         }`}
                       >
@@ -202,7 +202,7 @@ export default function ProgramPortalPage() {
                             isLive
                               ? 'bg-accent animate-pulse'
                               : isUpcoming
-                                ? 'bg-amber-500'
+                                ? 'bg-warning'
                                 : 'bg-ink-faint'
                           }`}
                         />

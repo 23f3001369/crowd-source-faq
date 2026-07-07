@@ -14,6 +14,8 @@ import { ZoomMeeting } from '../zoom/zoom-meeting.model.js';
 import CommunityPost from '../community/community-post.model.js';
 import FAQ from '../faq/faq.model.js';
 import { generateEmbedding, generateQueryEmbedding } from '../../utils/ai/embeddings.js';
+import { invalidatePublicCaches } from '../faq/public-faq.controller.js';
+import { invalidateCache } from '../../utils/http/cache.js';
 import { resolveProviderAsync } from '../../utils/ai/aiProvider.js';
 import { dispatchNotification } from '../../utils/http/notificationDispatcher.js';
 import { logger } from '../../utils/http/logger.js';
@@ -37,7 +39,7 @@ export async function aiChat(
   const cfg = await resolveProviderAsync();
 
   const body: Record<string, unknown> = {
-    model: cfg.model,
+    model: cfg.modelName,
     messages,
     max_tokens: maxTokens,
   };
@@ -105,7 +107,7 @@ Rules:
 - Skip: greetings, small talk, off-topic tangents, incomplete answers
 
 Return a JSON array (no markdown), each item:
-[{\"question\":\"...\",\"answer\":\"...\",\"confidence\":0.8,\"snippet\":\"exact 2-sentence excerpt\"}]`;
+[{"question":"...","answer":"...","confidence":0.8,"snippet":"exact 2-sentence excerpt"}]`;
 
   const userContent = `Meeting topic: "${topic}"\n\nTranscript:\n${transcriptText.slice(0, 15000)}`;
 
@@ -398,12 +400,22 @@ export async function searchRelevantCommunityPosts(query: string, topK = 5): Pro
 
 export async function searchKnowledge(
   query: string,
-  topK = 5
+  topK = 5,
+  options: { embedQuery?: boolean } = { embedQuery: false }
 ): Promise<KnowledgeMatch[]> {
-  const qEmb = await generateQueryEmbedding(query).catch((err) => {
-    logger.warn(`[knowledgeBase] Failed to generate embedding for query '${query}': ${(err as Error).message}`);
-    return null;
-  });
+  // v1.71 — Phase 8 R3: callers can opt out of the per-request embed
+  // by passing `{ embedQuery: false }`. Default is `true` (preserves
+  // existing RAG / auto-answer behaviour). The hot search path in
+  // `search.controller.ts` opts out so the user's search never blocks
+  // on the embedder — embedding failures against the Hugging Face /
+  // local model endpoint are now only logged once an hour by the
+  // `embedding-warm` cron (see `bootstrap/startup.ts`).
+  const qEmb = options.embedQuery !== false
+    ? await generateQueryEmbedding(query).catch((err) => {
+        logger.warn(`[knowledgeBase] Failed to generate embedding for query '${query}': ${(err as Error).message}`);
+        return null;
+      })
+    : null;
 
   const queryWords = query
     .toLowerCase()
@@ -515,6 +527,7 @@ export async function promoteToFAQ(
   const faq = new FAQ({
     question: knowledge.question,
     answer: knowledge.answer,
+    batchId: knowledge.batchId,
     category: 'General',
     status: 'approved',
     createdBy: new Types.ObjectId(createdBy),
@@ -524,6 +537,9 @@ export async function promoteToFAQ(
     promotedAt: new Date(),
   });
   await faq.save();
+
+  await invalidateCache();
+  invalidatePublicCaches();
 
   knowledge.status = 'promoted';
   knowledge.promotedFaqId = faq._id as Types.ObjectId;

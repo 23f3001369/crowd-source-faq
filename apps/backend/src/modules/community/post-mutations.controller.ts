@@ -12,7 +12,6 @@ import { Request, Response } from 'express';
 import { Types } from 'mongoose';
 import CommunityPost from './community-post.model.js';
 import FAQ from '../faq/faq.model.js';
-import { generateEmbedding } from '../../utils/ai/embeddings.js';
 import User, { calculateTier } from '../auth/user.model.js';
 import { invalidateCache } from '../../utils/http/cache.js';
 import { dispatchNotification } from '../../utils/http/notificationDispatcher.js';
@@ -25,12 +24,29 @@ import { sanitizeHtml } from '../../utils/http/sanitize.js';
 import { communityLog } from '../../utils/http/logger.js';
 import { evaluateDuplicates, isBlockingMatch } from './post-duplicate.controller.js';
 import { assertCanCreateContent } from '../../utils/banUtils.js';
+import { checkIdempotency, storeIdempotency } from '../../utils/http/idempotency.js';
 
 // POST /api/community — Create a new post (protected)
 export const createPost = async (req: Request, res: Response): Promise<void> => {
   if (!req.user) { res.status(401).json({ message: 'Not authorized' }); return; }
   // v1.66 — Golden-ban gate. 72h ban blocks new posts (questions, answers).
   if (!assertCanCreateContent(req.user, res)) return;
+
+  // Idempotency-Key (RFC 7231-ish): if the client provides a key, the
+  // same key within a 60s window returns the original response instead
+  // of creating a duplicate. Frontend generates a UUID per form-mount
+  // and sends it on submit. The check happens AFTER auth + ban gate
+  // so an unauthenticated request can't poison another user's cache.
+  // Read the Idempotency-Key header defensively — Express's req.headers
+  // is the standard access path but unit-test stubs may provide neither
+  // a method nor a property. The nullish fallback lets the controller
+  // work in both the real Express runtime and bare test fixtures.
+  const rawHeader = (req as { headers?: Record<string, string | string[] | undefined> }).headers?.['idempotency-key'];
+  const idempotencyKey = (Array.isArray(rawHeader) ? rawHeader[0] : rawHeader ?? '').toString().trim() || null;
+  if (idempotencyKey) {
+    const cached = checkIdempotency(idempotencyKey, 'createPost', req.user._id.toString());
+    if (cached) { res.status(cached.status).json(cached.body); return; }
+  }
   try {
     const { title, body, tags, attachments } = req.body as {
       title?: string;
@@ -54,6 +70,11 @@ export const createPost = async (req: Request, res: Response): Promise<void> => 
       ? tags.map((t: unknown) => String(t).trim().toLowerCase()).filter(Boolean).slice(0, 3)
       : [];
 
+    if (safeTags.length === 0) {
+      res.status(400).json({ message: 'At least one category tag is required.' });
+      return;
+    }
+
     // ── Server-side duplicate check ──────────────────────────────────────────
     // Uses the SAME AI-aware evaluator as the frontend's /check-duplicate
     // pre-check, so server enforcement is consistent with what the user
@@ -76,19 +97,17 @@ export const createPost = async (req: Request, res: Response): Promise<void> => 
       return;
     }
 
-    // Generate vector embedding for semantic search
-    let embedding: number[] | undefined;
-    try {
-      embedding = await generateEmbedding(`Question: ${title}. Description: ${body}`);
-    } catch (err) {
-      communityLog.warn(`Failed to generate embedding for post: ${(err as Error).message}`);
-    }
+    // Skip live embedding on create. The weekly batch cron (startup.ts
+    // embedding-warm) and Atlas vector index handle embeddings offline;
+    // live calls here would just produce zero-vectors (since no embedding
+    // infra is configured in production). Retrieval is text-based and
+    // doesn't need them. See apps/backend/src/utils/ai/embeddings.ts.
 
     // Validate attachments: cap at 4, drop malformed entries, ensure URLs
     // are on our Cloudinary account. Cloudinary's free plan caps the asset
     // count + size, so we hard-limit per post to keep the feed reasonable.
     const MAX_ATTACHMENTS = 4;
-    let safeAttachments: Array<{ url: string; publicId?: string; gcsUri?: string; objectPath?: string; width?: number; height?: number; format?: string; bytes?: number }> = [];
+    const safeAttachments: Array<{ url: string; publicId?: string; gcsUri?: string; objectPath?: string; width?: number; height?: number; format?: string; bytes?: number }> = [];
     if (Array.isArray(attachments) && attachments.length > 0) {
       if (attachments.length > MAX_ATTACHMENTS) {
         res.status(400).json({ message: `At most ${MAX_ATTACHMENTS} image attachments per post.` });
@@ -164,13 +183,18 @@ export const createPost = async (req: Request, res: Response): Promise<void> => 
           ? new Types.ObjectId(batchIdFromBody)
           : null;
 
+    if (!resolvedBatchId) {
+      res.status(400).json({ message: 'A valid program context (batchId) is required.' });
+      return;
+    }
+
     // Create post linked to the authenticated user with a default 'unanswered' status
     const post = await CommunityPost.create({
       title: sanitizeHtml(title),
       body: sanitizeHtml(body),
       author: req.user!._id,
       status: 'unanswered',
-      embedding,
+      // embedding omitted — assigned offline by the weekly batch cron
       batchId: resolvedBatchId,
       tags: safeTags,
       attachments: safeAttachments,
@@ -189,12 +213,34 @@ export const createPost = async (req: Request, res: Response): Promise<void> => 
     // Hydrate the author field before sending back the response
     await post.populate('author', 'name');
 
+    // ── Fire-and-forget auto-answer (latency fix: 24h cron → seconds) ─────
+    // Same pattern as comment.controller.ts addComment hook: dynamic
+    // import + .catch(). The user gets their 201 back immediately;
+    // the AI attempt runs in the background and persists its own
+    // aiContext / aiAnswerStatus writes asynchronously. The 24h cron
+    // stays in place as a safety net for any post that slips through
+    // (e.g. processPost threw an exception, the doc was created via
+    // a different path, etc.).
+    const { processPost } = await import('../../services/autoAnswer.js');
+    processPost(post._id).catch((err: Error) => {
+      communityLog.warn(
+        `[post] autoAnswer processPost failed for ${String(post._id)}: ${err.message}`,
+      );
+    });
+
     // Invalidate search cache so new post appears in community search immediately
     await invalidateCache().catch((err) => {
       communityLog.warn(`[post] Failed to invalidate cache on post creation: ${(err as Error).message}`);
     });
 
     res.status(201).json({ post });
+    // Store the response under the idempotency key (if any) so a
+    // retried request within 60s gets the same payload verbatim. Done
+    // AFTER the success response so the in-memory write doesn't add
+    // measurable latency to the user's request.
+    if (idempotencyKey) {
+      storeIdempotency(idempotencyKey, 'createPost', req.user._id.toString(), 201, { post });
+    }
   } catch (error) {
     communityLog.error(`[post] createPost failed: ${(error as Error).message}`);
     res.status(500).json({ message: 'Server error' });
@@ -223,21 +269,37 @@ export const toggleUpvote = async (req: Request, res: Response): Promise<void> =
     }
 
     const userId = req.user!._id.toString();
-    const alreadyUpvoted = post.upvotes.map((u: Types.ObjectId) => u.toString()).includes(userId);
+    // M4-5 (MEDIUM) fix: previously this read `alreadyUpvoted` from
+    // the loaded doc BEFORE the atomic update. Two concurrent upvotes
+    // by the same user could both read `alreadyUpvoted === false`,
+    // then both call `$addToSet` (idempotent — no double-vote) and
+    // both read `alreadyUpvoted === false` afterward, so downstream
+    // decisions like "did this user just upvote?" got the wrong
+    // answer. Now: rely on the post-update `updated.upvotes` to
+    // determine the *current* membership of the user, not the pre-update
+    // snapshot. `$addToSet` is idempotent so the membership is
+    // always correct after the atomic write.
+    const wasUpvotedBefore = post.upvotes.map((u: Types.ObjectId) => u.toString()).includes(userId);
 
     // Use atomic $pull/$addToSet to avoid race-condition duplicates
     const updated = await CommunityPost.findOneAndUpdate(
       { _id: post._id },
-      alreadyUpvoted
+      wasUpvotedBefore
         ? { $pull: { upvotes: new Types.ObjectId(userId) } }
         : { $addToSet: { upvotes: new Types.ObjectId(userId) } },
       { returnDocument: 'after' }
     );
 
     const newUpvotes = updated?.upvotes?.length ?? 0;
+    // S5-M5-style fresh-state check: derive `isUpvotedByMe` from
+    // the post-update doc, not the pre-update snapshot. Eliminates
+    // the brief read-then-write race where two concurrent upvotes
+    // could both think the user was "just upvoting" and both fire
+    // the post-promotion side-effect.
+    const isUpvotedByMe = !!updated?.upvotes?.some((u: Types.ObjectId) => u.toString() === userId);
 
     // Check if this upvote just crossed the promotion threshold
-    if (!alreadyUpvoted) {
+    if (wasUpvotedBefore !== isUpvotedByMe) {
       const { checkPromotionEligibility, startPromotionReview } = await import('../program/promotion.service.js').catch((err) => {
         communityLog.warn(`[post] Failed to dynamically import promotionService: ${(err as Error).message}`);
         return { checkPromotionEligibility: null, startPromotionReview: null };
@@ -257,7 +319,12 @@ export const toggleUpvote = async (req: Request, res: Response): Promise<void> =
 
     // Notify post author on new upvote only (self-votes and vote retractions send nothing)
     const isSelfVote = post.author.toString() === userId;
-    if (!isSelfVote && alreadyUpvoted) {
+    // M4-5: use post-update `wasUpvotedBefore` / `isUpvotedByMe` to
+    // pick the right branch. `wasUpvotedBefore === true &&
+    // !isUpvotedByMe` means the user just retracted an upvote
+    // (rollback the +2 author points). The opposite means the
+    // user just upvoted (dispatch the notification + add +2).
+    if (!isSelfVote && wasUpvotedBefore && !isUpvotedByMe) {
       await User.findByIdAndUpdate(post.author, { $inc: { points: -2, reputation: -2 } });
       await ReputationLog.deleteMany({
         userId: post.author,
@@ -266,7 +333,7 @@ export const toggleUpvote = async (req: Request, res: Response): Promise<void> =
         action: 'upvote_received',
       });
     }
-    if (!isSelfVote && !alreadyUpvoted) {
+    if (!isSelfVote && !wasUpvotedBefore && isUpvotedByMe) {
       dispatchNotification({
         recipientId: post.author,
         eventType: 'upvote',
@@ -301,6 +368,7 @@ export const toggleUpvote = async (req: Request, res: Response): Promise<void> =
       }
       await ReputationLog.create({
         userId: post.author,
+        batchId: post.batchId ?? null,
         delta: 2,
         reason: `Question upvote received: "${post.title.slice(0, 40)}"`,
         action: 'upvote_received',
@@ -309,7 +377,7 @@ export const toggleUpvote = async (req: Request, res: Response): Promise<void> =
       });
     }
 
-    res.json({ upvotes: newUpvotes, upvotedByMe: !alreadyUpvoted });
+    res.json({ upvotes: newUpvotes, upvotedByMe: isUpvotedByMe });
   } catch (error) {
     communityLog.error(`[post] toggleUpvote failed: ${(error as Error).message}`);
     res.status(500).json({ message: 'Server error' });
@@ -321,7 +389,7 @@ export const toggleUpvote = async (req: Request, res: Response): Promise<void> =
 const VALID_REPORT_REASONS = ['spam', 'duplicate', 'abuse', 'other'] as const;
 type ReportReason = typeof VALID_REPORT_REASONS[number];
 
-export const reportPost = async (req: Request<{ id: string }, {}, { reason: string }>, res: Response): Promise<void> => {
+export const reportPost = async (req: Request<{ id: string }, Record<string, never>, { reason: string }>, res: Response): Promise<void> => {
   if (!req.user) { res.status(401).json({ message: 'Not authorized' }); return; }
   try {
     const { reason } = req.body;
@@ -498,14 +566,8 @@ export const updatePost = async (req: Request, res: Response): Promise<void> => 
         : [];
     }
 
-    // Recalculate embedding if title or body changes
-    if (title !== undefined || body !== undefined) {
-      try {
-        post.embedding = await generateEmbedding(`Question: ${post.title}. Description: ${post.body}`);
-      } catch (err) {
-        communityLog.warn(`Failed to generate embedding for updated post: ${(err as Error).message}`);
-      }
-    }
+    // Embedding recalculation skipped — handled by weekly batch cron
+    // (see startup.ts embedding-warm). Saves one API call per edit.
 
     await post.save();
     await post.populate('author', 'name');

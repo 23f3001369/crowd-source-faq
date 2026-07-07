@@ -17,6 +17,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import adminApi from '../../utils/adminApi';
+import { dangerBorder } from '../../../styles/style_config';
 
 interface SupportCategory {
   _id: string;
@@ -113,7 +114,7 @@ function CategoryRow({
           type="button"
           onClick={onDelete}
           disabled={saving}
-          className="px-2 py-0.5 rounded text-rose-700/80 hover:text-rose-700 hover:bg-rose-50 disabled:opacity-40"
+          className="px-2 py-0.5 rounded text-danger/80 hover:text-danger hover:bg-danger-light disabled:opacity-40"
         >
           Delete
         </button>
@@ -357,7 +358,7 @@ export default function ProgramSupportCategoriesTab({ programId }: { programId: 
   }
   if (error || !categories) {
     return (
-      <div className="rounded-2xl border border-rose-200 bg-rose-50 p-6 text-sm text-rose-700">
+      <div className={`${dangerBorder} rounded-2xl p-6 text-sm`}>
         {error ?? 'Failed to load categories.'}{' '}
         <button type="button" onClick={() => { void load(); }} className="underline">Retry</button>
       </div>
@@ -371,8 +372,8 @@ export default function ProgramSupportCategoriesTab({ programId }: { programId: 
           initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
           className={`px-4 py-2.5 rounded-lg text-xs font-medium border ${
             toast.type === 'error'
-              ? 'bg-rose-50 text-rose-700 border-rose-200'
-              : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+              ? dangerBorder
+              : 'bg-accent/10 text-accent border-accent/30'
           }`}
         >
           {toast.msg}

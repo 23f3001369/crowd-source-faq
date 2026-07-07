@@ -86,12 +86,27 @@ export const getAiConfig = async (req: Request, res: Response): Promise<void> =>
     }
 
     const activeProvider = await detectActiveProvider();
+    // When a batchId is supplied but no per-program override exists,
+    // we still return the GLOBAL config so the admin UI can render
+    // the current feature toggles. hasOverride:false tells the UI
+    // that the next save will create a new override doc.
+    let view: Record<string, unknown>;
+    if (config) {
+      view = config.publicView();
+    } else if (batchIdObjectId) {
+      const global = await AiConfig.findOne({ batchId: null, isActive: true });
+      view = global ? global.publicView() : { providers: {}, features: {} };
+    } else {
+      view = { providers: {}, features: {} };
+    }
+    // activeProvider may now be `null` (no provider has any key). The
+    // frontend reads `activeProvider` and falls back to the anthropic
+    // default if it's missing — emit the literal string 'none' so the
+    // UI can branch on it instead of pretending anthropic is active.
     res.json({
-      ...(config ? config.publicView() : { providers: {}, features: {} }),
-      activeProvider,
-      // The shape the admin UI needs to render the 'no per-program
-      // override' state.
-      ...(batchIdObjectId && !config ? { hasOverride: false, batchId: batchIdObjectId } : { hasOverride: !!config }),
+      ...view,
+      activeProvider: activeProvider ?? 'none',
+      ...(batchIdObjectId ? { hasOverride: !!config, batchId: batchIdObjectId } : { hasOverride: !!config }),
     });
   } catch (error) {
     res.status(500).json({ message: 'Server error' });
@@ -262,7 +277,12 @@ export const updateAiConfig = async (req: Request, res: Response): Promise<void>
 
 export const resetAiUsage = async (req: Request, res: Response): Promise<void> => {
   try {
-    const config = await AiConfig.findOne({ isActive: true });
+    // S5-C6 (CRITICAL) fix: scope the findOne to the GLOBAL config
+    // (batchId: null). Previously this returned any active doc — with
+    // per-program overrides, it could return a program-specific override
+    // instead of the global default. `revealApiKey` then surfaced the
+    // wrong key, and `resetAiUsage` reset the wrong usage row.
+    const config = await AiConfig.findOne({ isActive: true, batchId: null });
     if (config) {
       // v1.68 — H3 fix: atomic reset via $set.
       await AiConfig.findOneAndUpdate(
@@ -282,7 +302,8 @@ export const resetAiUsage = async (req: Request, res: Response): Promise<void> =
 export const getAiProviders = async (_req: Request, res: Response): Promise<void> => {
   type ProviderKey = AIProviderType;
 
-  const config = await AiConfig.findOne({ isActive: true });
+  // S5-C6 (CRITICAL) fix: see resetAiUsage above. Scope to global config.
+  const config = await AiConfig.findOne({ isActive: true, batchId: null });
   const providerMeta: Record<ProviderKey, { label: string; defaultModel: string; hasKey: boolean; configuredModel: string }> = {
     anthropic: { label: 'Anthropic Claude', defaultModel: 'claude-sonnet-4-20250514', hasKey: false, configuredModel: 'claude-sonnet-4-20250514' },
     openai:    { label: 'OpenAI GPT',       defaultModel: 'gpt-4o-mini',              hasKey: false, configuredModel: 'gpt-4o-mini' },
@@ -310,7 +331,11 @@ export const getAiProviders = async (_req: Request, res: Response): Promise<void
     isActive: key === activeProvider,
   }));
 
-  res.json({ providers, activeProvider });
+  // Same 'none' sentinel as getAiConfig — when no provider has any key,
+  // the frontend needs an explicit signal that the system is unconfigured
+  // so it can show "No AI provider configured" instead of pretending one is
+  // active.
+  res.json({ providers, activeProvider: activeProvider ?? 'none' });
 };
 
 // ─── GET /api/admin/ai/providers/test?provider=X ─────────────────────────────
@@ -322,6 +347,26 @@ export const testProvider = async (req: Request, res: Response): Promise<void> =
   if (!provider || !validProviders.includes(provider)) {
     res.status(400).json({ ok: false, message: 'Invalid provider' });
     return;
+  }
+
+  // Short-circuit when the provider has no API key configured. Without
+  // this, the chat call would still fire — hitting the provider's
+  // `/messages` or `/chat/completions` endpoint with an empty Bearer
+  // token, getting back a 401, and only THEN returning ok:false. The
+  // resulting error string is also ugly (e.g. "anthropic error: {"error":
+  // "invalid x-api-key"}") and confuses admins. A clean pre-flight
+  // check gives a deterministic, actionable message.
+  if (provider !== 'embedding') {
+    const config = await AiConfig.findOne({ isActive: true, batchId: null });
+    const dbKey = config ? config.getApiKey(provider as AIProviderType) : null;
+    const envKey = process.env[envKeyName(provider as AIProviderType)] ?? '';
+    if (!dbKey && !envKey) {
+      res.json({
+        ok: false,
+        message: `No API key configured for ${provider}. Set ${envKeyName(provider as AIProviderType)} in env or save a key in AI Settings.`,
+      });
+      return;
+    }
   }
 
   try {
@@ -352,7 +397,9 @@ export const revealApiKey = async (req: Request, res: Response): Promise<void> =
     return;
   }
 
-  const config = await AiConfig.findOne({ isActive: true });
+  // S5-C6 (CRITICAL) fix: see resetAiUsage above. Scope to global config
+  // so revealApiKey surfaces the global API key, not a per-program override.
+  const config = await AiConfig.findOne({ isActive: true, batchId: null });
   let key: string | null = null;
   if (provider === 'embedding') {
     key = config?.getEmbeddingApiKey() ?? null;
@@ -373,25 +420,46 @@ export const revealApiKey = async (req: Request, res: Response): Promise<void> =
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+// S5-H17 (HIGH) fix: replaced substring matchers with an exact-match
+// closed set per provider. The previous `lowerModel.includes('claude')`
+// pattern accepted e.g. 'gpt-claude-minimax-trash-injection-xss' for
+// any provider whose name appeared anywhere in the string. Exact
+// match against a closed set blocks the bypass. To add a new model
+// for a provider, extend the set below.
+const VALID_MODELS: Record<string, ReadonlySet<string>> = {
+  anthropic: new Set([
+    'claude-3-5-sonnet-20241022',
+    'claude-3-5-haiku-20241022',
+    'claude-3-opus-20240229',
+    'claude-opus-4-5',
+  ]),
+  openai: new Set([
+    'gpt-4o',
+    'gpt-4o-mini',
+    'gpt-4-turbo',
+    'gpt-3.5-turbo',
+    'o1-preview',
+    'o1-mini',
+    'o3-mini',
+  ]),
+  xai: new Set(['grok-2', 'grok-2-mini', 'grok-beta']),
+  minimax: new Set(['MiniMax-Text-01', 'abab-6.5-chat', 'abab-7-chat']),
+  gemini: new Set(['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-2.0-flash-exp']),
+};
+
 export function validateModelForProvider(model: string, provider: string): { isValid: boolean; error?: string } {
   if (!model) {
     return { isValid: true };
   }
-  const lowerModel = model.toLowerCase();
-  if (provider === 'anthropic' && !lowerModel.includes('claude')) {
-    return { isValid: false, error: "Anthropic models must contain 'claude'." };
+  const allowed = VALID_MODELS[provider];
+  if (!allowed) {
+    return { isValid: true }; // unknown provider — let the runtime decide
   }
-  if (provider === 'openai' && !(lowerModel.includes('gpt') || lowerModel.includes('o1') || lowerModel.includes('o3'))) {
-    return { isValid: false, error: "OpenAI models must contain 'gpt', 'o1', or 'o3'." };
-  }
-  if (provider === 'xai' && !lowerModel.includes('grok')) {
-    return { isValid: false, error: "xAI models must contain 'grok'." };
-  }
-  if (provider === 'minimax' && !(lowerModel.includes('minimax') || lowerModel.includes('abab'))) {
-    return { isValid: false, error: "MiniMax models must contain 'minimax' or 'abab'." };
-  }
-  if (provider === 'gemini' && !lowerModel.includes('gemini')) {
-    return { isValid: false, error: "Gemini models must contain 'gemini'." };
+  if (!allowed.has(model)) {
+    return {
+      isValid: false,
+      error: `Model "${model}" is not in the allowed set for provider "${provider}". Allowed: ${Array.from(allowed).join(', ')}.`,
+    };
   }
   return { isValid: true };
 }
@@ -405,10 +473,18 @@ function envModelName(p: AIProviderType): string {
 
 /**
  * Determine the active provider: prefer DB-configured keys; fall back to env vars.
- * Priority: anthropic > openai > xai > minimax.
+ * Priority: anthropic > openai > xai > minimax > gemini > custom.
+ *
+ * Returns `null` when no provider has a usable API key (neither DB nor env).
+ * Previously this function fell through to `'custom'` on miss, which made
+ * the admin UI display "Configured ✓ Active" for a completely non-functional
+ * provider (since `custom` always "passed" `isActive`). Callers must treat
+ * `null` as "AI is not configured — the system is degraded, surface this to
+ * the admin UI instead of pretending a provider is active."
  */
-export async function detectActiveProvider(): Promise<AIProviderType> {
-  const config = await AiConfig.findOne({ isActive: true });
+export async function detectActiveProvider(): Promise<AIProviderType | null> {
+  // S5-C6 (CRITICAL) fix: scope to global config.
+  const config = await AiConfig.findOne({ isActive: true, batchId: null });
   const hasKey = (p: AIProviderType) => {
     const keyEnv = { anthropic: 'ANTHROPIC_API_KEY', openai: 'OPENAI_API_KEY', xai: 'XAI_API_KEY', minimax: 'MINIMAX_API_KEY', gemini: 'GEMINI_API_KEY', custom: 'CUSTOM_API_KEY' }[p];
     return !!((config && config.getApiKey(p)) || process.env[keyEnv]);
@@ -430,5 +506,6 @@ export async function detectActiveProvider(): Promise<AIProviderType> {
   if (hasKey('xai'))       return 'xai';
   if (hasKey('minimax'))   return 'minimax';
   if (hasKey('gemini'))    return 'gemini';
-  return 'custom';
+  // No DB row AND no env-var key for any provider → nothing to talk to.
+  return null;
 }

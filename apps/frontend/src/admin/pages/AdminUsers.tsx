@@ -4,6 +4,7 @@ import { useBodyScrollLock } from '../../hooks/useBodyScrollLock';
 import adminApi from '../utils/adminApi';
 import Badge from '../components/common/Badge';
 import { useDebounce } from '../../hooks/useDebounce';
+import { modalBackdrop } from '../../styles/style_config';
 
 type UserRole = 'admin' | 'moderator' | 'user' | 'ai_moderator' | 'expert';
 interface AdminUser { _id: string; name: string; email: string; role: UserRole; createdAt: string; updatedAt: string; points?: number; reputation?: number; tier?: string; positiveBadges?: Array<{ badgeId: { _id: string; name: string; slug: string; icon: string; description: string }; awardedAt?: string; reason?: string }>; negativeBadges?: Array<{ badgeId: { _id: string; name: string; slug: string; icon: string }; awardedAt?: string; reason?: string }>; isBanned?: boolean; suspendedUntil?: string; }
@@ -12,10 +13,10 @@ interface UsersApiResponse { users: AdminUser[]; total: number; pages: number; }
 const TIER_COLORS: Record<string, string> = {
   newcomer:         'bg-border/40 text-ink-faint',
   contributor:      'bg-warning/10 text-warning',
-  helper:           'bg-blue-500/10 text-blue-400',
-  expert:           'bg-yellow-400/10 text-yellow-400',
+  helper:           'bg-accent/10 text-accent',
+  expert:           'bg-warning/15 text-warning',
   champion:         'bg-accent/10 text-accent',
-  knowledge_master: 'bg-purple-500/10 text-purple-400',
+  knowledge_master: 'bg-accent/10 text-accent',
 };
 const TIER_ICONS: Record<string, string> = {
   newcomer:         '🌱',
@@ -38,7 +39,7 @@ function UserDetailModal({ user, onClose, onRefresh }: { user: AdminUser; onClos
   const [suspendReason, setSuspendReason] = useState('');
   const [banReason, setBanReason] = useState('');
 
-  const doAction = async (fn: () => Promise<void>, postAction?: () => void) => { setActionLoading('*'); try { await fn(); if (postAction) postAction(); onRefresh(); } catch {} finally { setActionLoading(''); } };
+  const doAction = async (fn: () => Promise<void>, postAction?: () => void) => { setActionLoading('*'); try { await fn(); if (postAction) postAction(); onRefresh(); } catch { void 0 } finally { setActionLoading(''); } };
 
   const handleUnban    = () => doAction(async () => { await adminApi.post('/moderation/unban', { userId: user._id }); });
   const handleUnsuspend = () => doAction(async () => { await adminApi.post('/moderation/unsuspend', { userId: user._id }); });
@@ -53,7 +54,7 @@ function UserDetailModal({ user, onClose, onRefresh }: { user: AdminUser; onClos
 
   return (
     <>
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <div className={modalBackdrop} onClick={onClose}>
         <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-lg admin-modal-panel max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
           <div className="admin-modal-header shrink-0">
             <div className="flex items-center gap-3">
@@ -243,7 +244,7 @@ function RoleModal({ user, onClose, onUpdated }: { user: AdminUser; onClose: () 
   const [error, setError] = useState('');
   const handleSave = async () => { if (role === user.role) { onClose(); return; } setLoading(true); setError(''); try { const res = await adminApi.patch<{ user: AdminUser }>(`/auth/users/${user._id}/role`, { role }); onUpdated({ ...user, role: res.data.user.role }); onClose(); } catch (err) { setError(((err as { response?: { data?: { message?: string } } })?.response?.data?.message) ?? 'Failed'); } finally { setLoading(false); } };
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={e => e.target === e.currentTarget && onClose()}>
+    <div className={modalBackdrop} onClick={e => e.target === e.currentTarget && onClose()}>
       <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-sm admin-modal-panel">
         <div className="admin-modal-header">
           <p className="text-sm font-semibold text-ink">Change Role</p>
@@ -274,7 +275,7 @@ function DeleteModal({ user, onClose, onDeleted }: { user: AdminUser; onClose: (
   const [error, setError] = useState('');
   const handleDelete = async () => { setLoading(true); setError(''); try { await adminApi.delete(`/auth/users/${user._id}`); onDeleted(user._id); onClose(); } catch (err) { setError(((err as { response?: { data?: { message?: string } } })?.response?.data?.message) ?? 'Failed'); } finally { setLoading(false); } };
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={e => e.target === e.currentTarget && onClose()}>
+    <div className={modalBackdrop} onClick={e => e.target === e.currentTarget && onClose()}>
       <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-xs admin-modal-panel">
         <div className="admin-modal-body">
           <p className="text-sm font-semibold text-ink">Delete User</p>

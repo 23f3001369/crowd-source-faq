@@ -1,14 +1,54 @@
 import { Request, Response } from 'express';
+import { Types } from 'mongoose';
 import Project from '../admin/project.model.js';
 import Orientation from './orientation.model.js';
 import AiQuestion from '../ai/ai-question.model.js';
 import OpenAI from 'openai';
 
-// Fetch the most recent orientation video
+/**
+ * Resolve the active program id for a public-facing welcome request.
+ *
+ * Reads `x-program-id` / `x-batch-id` / `x-workspace-id` headers first
+ * (the frontend `api` interceptor sets this from localStorage), then
+ * falls back to a `?batchId=<id>` query string. Returns `null` when
+ * neither is present.
+ *
+ * Public endpoints (no `req.user`) need this so they scope to the
+ * correct program without trusting the client to "know" the active
+ * one. Admins can also use this via the admin API client, which
+ * sets the same header from the active-program selector.
+ */
+function batchIdFromRequest(req: Request): string | null {
+  const fromHeader =
+    (req.headers['x-program-id'] as string | undefined) ||
+    (req.headers['x-batch-id'] as string | undefined) ||
+    (req.headers['x-workspace-id'] as string | undefined);
+  const raw = fromHeader ?? (req.query?.batchId as string | undefined);
+  if (typeof raw !== 'string') return null;
+  return Types.ObjectId.isValid(raw) ? raw : null;
+}
+
+// Fetch the most recent orientation video for the active program.
+//
+// v1.69 — multi-program fix: previously this returned the most
+// recently-created orientation across ALL programs, which leaked
+// orientations from other programs into students who hadn't picked
+// the same program the admin uploaded to. Now we scope by the
+// active program header / query. When no program context is
+// supplied, we return null so the student sees the proper "no
+// active orientation found" empty state instead of someone else's
+// orientation.
 export const getActiveOrientation = async (req: Request, res: Response): Promise<void> => {
   try {
-    const orientation = await Orientation.findOne().sort({ createdAt: -1 });
-    res.status(200).json(orientation);
+    const batchId = batchIdFromRequest(req);
+    if (!batchId) {
+      res.status(200).json(null);
+      return;
+    }
+    const orientation = await Orientation.findOne({ batchId: new Types.ObjectId(batchId) })
+      .sort({ createdAt: -1 })
+      .lean();
+    res.status(200).json(orientation ?? null);
   } catch (error) {
     res.status(500).json({ message: 'Error fetching orientation', error });
   }
@@ -103,7 +143,6 @@ User Question: ${question}
 export const trackWelcomeOnboarding = async (req: Request, res: Response): Promise<void> => {
   try {
     const { timeSpent } = req.body;
-    // @ts-ignore
     const userId = req.user?._id;
 
     if (!userId) {
@@ -111,7 +150,24 @@ export const trackWelcomeOnboarding = async (req: Request, res: Response): Promi
       return;
     }
 
-    if (timeSpent >= 60) {
+    // 5.18 fix: validate timeSpent shape and apply a sane policy.
+    //   - Reject negative values, non-numbers, or > 4 hours (caller
+    //     could send `timeSpent: 9999` to flip welcomePackageOnboarded
+    //     on a single POST).
+    //   - Require a single-POST timeSpent of 300s (5 min) before
+    //     marking the user onboarded. The previous code accepted
+    //     timeSpent >= 60 (1 minute), which is trivially gameable.
+    //   - The User schema does NOT yet have a `welcomePackageTotalSeconds`
+    //     accumulator field — adding that is a schema migration
+    //     deferred to a follow-up PR. Until then, this single-POST
+    //     check is the only server-side gate. Document the trade-off
+    //     in the schema PR.
+    const t = Number(timeSpent);
+    if (!Number.isFinite(t) || t < 0 || t > 60 * 60 * 4) {
+      res.status(400).json({ message: 'timeSpent must be 0..14400 seconds.' });
+      return;
+    }
+    if (t >= 300) {
       const User = (await import('../auth/user.model.js')).default;
       await User.findByIdAndUpdate(userId, { welcomePackageOnboarded: true });
     }
@@ -125,7 +181,6 @@ export const trackWelcomeOnboarding = async (req: Request, res: Response): Promi
 
 export const completeOrientation = async (req: Request, res: Response): Promise<void> => {
   try {
-    // @ts-ignore
     const userId = req.user?._id;
     if (!userId) {
       res.status(401).json({ message: 'Unauthorized' });
@@ -145,7 +200,6 @@ export const completeOrientation = async (req: Request, res: Response): Promise<
 export const selectProject = async (req: Request, res: Response): Promise<void> => {
   try {
     const { project } = req.body;
-    // @ts-ignore
     const userId = req.user?._id;
 
     if (!userId) {
@@ -204,7 +258,6 @@ export const selectProject = async (req: Request, res: Response): Promise<void> 
 
 export const getMyProject = async (req: Request, res: Response): Promise<void> => {
   try {
-    // @ts-ignore
     const userId = req.user?._id;
     if (!userId) {
       res.status(401).json({ message: 'Unauthorized' });

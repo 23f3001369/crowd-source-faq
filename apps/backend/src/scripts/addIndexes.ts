@@ -44,6 +44,9 @@ async function migrate() {
     // Escalation system
     { name: 'escalationStatus+createdAt', coll: 'yaksha_faq_communityposts',          key: { escalationStatus: 1, createdAt: -1 } },
     { name: 'escalationStatus+escalatedAt', coll: 'yaksha_faq_communityposts',       key: { escalationStatus: 1, escalatedAt: -1 } },
+    // MongoDB queue (replaces BullMQ)
+    { name: 'jobType+status+priority+runAfter', coll: 'yaksha_faq_jobs',                key: { type: 1, status: 1, priority: -1, runAfter: 1 } },
+    { name: 'jobStatus+updatedAt',           coll: 'yaksha_faq_jobs',                  key: { status: 1, updatedAt: -1 } },
   ];
 
   for (const idx of indexes) {

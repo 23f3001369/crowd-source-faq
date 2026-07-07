@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import api from '../../utils/api';
 import { useBodyScrollLock } from '../../hooks/useBodyScrollLock';
+import { modalCloseButton } from '../../styles/style_config';
 
 interface ZoomAssessmentModalProps {
   onClose: () => void;
@@ -173,7 +174,7 @@ export default function ZoomAssessmentModal({ onClose }: ZoomAssessmentModalProp
             <button 
               onClick={onClose} 
               aria-label="Close"
-              className="w-7 h-7 flex items-center justify-center rounded-full text-ink-faint hover:text-ink hover:bg-black/[0.04] transition-colors cursor-pointer"
+              className={modalCloseButton}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
                 <line x1="6" y1="6" x2="18" y2="18"/>
@@ -210,12 +211,12 @@ export default function ZoomAssessmentModal({ onClose }: ZoomAssessmentModalProp
             </div>
           ) : error ? (
             <div className="text-center p-[32px] flex-1 flex flex-col justify-center items-center overflow-y-auto gap-[20px]">
-              <p className="text-red-500 font-medium text-sm sm:text-base leading-relaxed">{error}</p>
-              <button onClick={onClose} className="btn-base bg-black/5 hover:bg-black/10 cursor-pointer rounded-xl px-6 py-2.5 text-sm font-semibold text-ink-soft">Close</button>
+              <p className="text-danger font-medium text-sm sm:text-base leading-relaxed">{error}</p>
+              <button onClick={onClose} className="btn-base bg-mist hover:bg-border cursor-pointer rounded-xl px-6 py-2.5 text-sm font-semibold text-ink-soft">Close</button>
             </div>
           ) : status === 'passed' ? (
             <div className="text-center p-[32px] overflow-y-auto flex-1 flex flex-col justify-center items-center gap-[20px]">
-              <div className="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto flex-shrink-0">
+              <div className="w-16 h-16 bg-accent/15 text-accent rounded-full flex items-center justify-center mx-auto flex-shrink-0">
                 <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
               </div>
               <div className="space-y-2">
@@ -279,9 +280,9 @@ export default function ZoomAssessmentModal({ onClose }: ZoomAssessmentModalProp
                           key={idx}
                           onClick={() => handleSelect(idx)}
                           className={`w-full text-left px-[24px] py-[20px] rounded-2xl border transition-all duration-200 cursor-pointer flex items-center min-h-[72px] ${
-                            isSelected 
-                              ? 'border-success bg-success/5 text-success ring-1 ring-success' 
-                              : 'border-border hover:border-success/40 hover:bg-black/[0.01]'
+                            isSelected
+                              ? 'border-success bg-success/5 text-success ring-1 ring-success'
+                              : 'border-border hover:border-success/40 hover:bg-mist/30'
                           }`}
                         >
                           <div className="flex items-center gap-[16px] w-full">

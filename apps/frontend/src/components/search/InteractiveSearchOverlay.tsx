@@ -10,6 +10,7 @@ import { useAuthGate } from '../../context/AuthModalContext';
 import { useBatch } from '../../context/BatchContext';
 import { useCategoryClusters } from '../explore/usePublicFaqApi';
 import type { SearchResult, TrendingQuery } from '../../types/ui';
+import { textLabelXsMb1 } from '../../styles/style_config';
 
 interface InteractiveSearchOverlayProps {
   onSearchComplete?: (query: string) => void;
@@ -211,7 +212,7 @@ export default function InteractiveSearchOverlay({ onSearchComplete, variant = '
               <div className="grid gap-4 px-4 pb-4 lg:grid-cols-[1.35fr_0.95fr]">
                 <div>
                   <div className="flex items-center justify-between mb-2">
-                    <p className="text-[11px] font-semibold text-ink-faint uppercase tracking-wide">
+                    <p className={textLabelXsMb1}>
                       Matching questions
                     </p>
                     {showResultsPanel && (
@@ -282,7 +283,7 @@ export default function InteractiveSearchOverlay({ onSearchComplete, variant = '
 
                 <div className="space-y-4">
                   <div>
-                    <p className="text-[11px] font-semibold text-ink-faint uppercase tracking-wide">
+                    <p className={textLabelXsMb1}>
                       Suggestions
                     </p>
                     <div className="mt-2 space-y-1">
@@ -300,7 +301,7 @@ export default function InteractiveSearchOverlay({ onSearchComplete, variant = '
                   </div>
 
                   <div>
-                    <p className="text-[11px] font-semibold text-ink-faint uppercase tracking-wide">
+                    <p className={textLabelXsMb1}>
                       Popular searches
                     </p>
                     <div className="mt-2 flex flex-wrap gap-2">

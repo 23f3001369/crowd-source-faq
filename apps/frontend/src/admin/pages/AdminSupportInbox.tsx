@@ -8,6 +8,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { listSupportRequests, SUPPORT_ISSUE_OPTIONS } from '../../components/support/api';
 import { getIssueIcon } from '../../components/support/icons';
 import type { SupportListResponse, SupportStatus } from '../../components/support/types';
+import { STATUS_STYLES, adminTheadRow, tableTh, tableTd, tableTr } from '../../styles/style_config';
 
 
 const STATUSES: (SupportStatus | '')[] = ['', 'Pending', 'In Review', 'Resolved', 'Rejected'];
@@ -125,33 +126,33 @@ function InboxInner(): React.ReactElement {
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full">
-              <thead><tr className="admin-thead-row">
-                <th className="admin-th">Title</th>
-                <th className="admin-th">User</th>
-                <th className="admin-th">Issue</th>
-                <th className="admin-th">Status</th>
-                <th className="admin-th">Replies</th>
-                <th className="admin-th">Updated</th>
+              <thead><tr className={adminTheadRow}>
+                <th className={tableTh}>Title</th>
+                <th className={tableTh}>User</th>
+                <th className={tableTh}>Issue</th>
+                <th className={tableTh}>Status</th>
+                <th className={tableTh}>Replies</th>
+                <th className={tableTh}>Updated</th>
               </tr></thead>
               <tbody>
                 {requests.map((r) => (
-                  <tr key={r._id} className="admin-tr">
-                    <td className="admin-td max-w-[260px]">
+                  <tr key={r._id} className={tableTr}>
+                    <td className={`${tableTd} max-w-[260px]`}>
                       <Link to={`/admin/support/${r._id}`} className="text-ink hover:text-accent">
                         <span className="block truncate font-medium" title={r.title}>{r.title}</span>
                       </Link>
                     </td>
-                    <td className="admin-td">
+                    <td className={tableTd}>
                       <p className="text-xs text-ink truncate max-w-[180px]" title={r.userName}>{r.userName}</p>
                       <p className="text-[10px] text-ink-faint truncate max-w-[180px]" title={r.userEmail}>{r.userEmail}</p>
                     </td>
-                    <td className="admin-td">
+                    <td className={tableTd}>
                       <span className="inline-flex items-center gap-1.5 text-xs text-ink-soft">
                         <span className="text-accent">{getIssueIcon(r.issueType)}</span>
                         {SUPPORT_ISSUE_OPTIONS.find((o) => o.key === r.issueType)?.shortLabel ?? r.issueLabel}
                       </span>
                     </td>
-                    <td className="admin-td">
+                    <td className={tableTd}>
                       <div className="flex flex-col gap-1 items-start">
                         {/* v1.65 — Golden badge. Surfaces the new
                             isGolden flag in the inbox so admins can
@@ -174,8 +175,8 @@ function InboxInner(): React.ReactElement {
                         </span>
                       </div>
                     </td>
-                    <td className="admin-td text-ink-faint tabular-nums">{r.followUps.length}</td>
-                    <td className="admin-td text-ink-faint">{new Date(r.updatedAt).toLocaleDateString()}</td>
+                    <td className={`${tableTd} text-ink-faint tabular-nums`}>{r.followUps.length}</td>
+                    <td className={`${tableTd} text-ink-faint`}>{new Date(r.updatedAt).toLocaleDateString()}</td>
                   </tr>
                 ))}
               </tbody>
@@ -221,12 +222,7 @@ function Kpi({ label, value, tone }: { label: string; value: number; tone?: 'war
 }
 
 function statusStyle(s: SupportStatus): string {
-  switch (s) {
-    case 'Pending':   return 'bg-warning/15 text-warning border-warning/30';
-    case 'In Review': return 'bg-admin-blue/15 text-admin-blue border-admin-blue/30';
-    case 'Resolved':  return 'bg-success/15 text-success border-success/30';
-    case 'Rejected':  return 'bg-danger/15 text-danger border-danger/30';
-  }
+  return STATUS_STYLES[s] || '';
 }
 
 export default function AdminSupportInbox(): React.ReactElement {

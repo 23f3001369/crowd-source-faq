@@ -523,3 +523,217 @@ export async function getGoldenQueue(req: Request, res: Response): Promise<void>
     res.status(500).json({ message: 'Failed to load Golden queue.' });
   }
 }
+
+// ─── User Golden Ticket history (v1.73, additive) ─────────────────────────
+//
+// Closes the gap where resolved/rejected Golden tickets vanish from
+// the live Escalation Queue and users had no way to revisit the
+// admin answer. Surfaces the caller's own past Golden tickets, the
+// active ban window (if any), and a chronological activity feed
+// reconstructed from each ticket's statusHistory[].
+
+/**
+ * GET /api/support/golden/history
+ *
+ * Returns the caller's OWN Golden tickets (resolved + rejected +
+ * in-flight), the active ban window derived from
+ * `user.goldenBannedUntil`, and a chronological activity log
+ * composed from each ticket's statusHistory entries plus any
+ * re-resolve events.
+ *
+ * Auth: any logged-in user. The `userId` filter is read from
+ * `req.user._id`, NEVER from the query string, so a caller cannot
+ * request another user's history.
+ *
+ * Pagination: `?page=&limit=`, defaults to page=1 limit=25, capped
+ * at 50.
+ *
+ * Feature gate: `goldenTicket` (matches `/golden/queue`).
+ */
+export async function getMyGoldenHistory(req: Request, res: Response): Promise<void> {
+  if (!(await requireFeatureOn(req, res, 'goldenTicket'))) return;
+  const userId = getAuthedUserId(req);
+  if (!userId) { res.status(401).json({ message: 'Authentication required.' }); return; }
+
+  try {
+    const page = Math.max(1, parseInt(String(req.query.page ?? '1')) || 1);
+    const limit = Math.min(50, Math.max(1, parseInt(String(req.query.limit ?? '25')) || 25));
+    const skip = (page - 1) * limit;
+
+    // 1. Caller's own Golden tickets (latest first).
+    const filter = { userId, isGolden: true };
+    const { default: User } = await import('../auth/user.model.js');
+    const [total, tickets, callerUser] = await Promise.all([
+      SupportRequest.countDocuments(filter),
+      SupportRequest.find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .select('-__v')
+        .lean(),
+      User.findById(userId).select('goldenBannedUntil isBanned').lean(),
+    ]);
+
+    // 2. Map tickets into the public response shape. Non-admins see
+    //    their own real name on their OWN history (no redaction).
+    //    goldenResolutions default to [] defensively for legacy rows.
+    const history = tickets.map((t) => ({
+      _id: t._id.toString(),
+      title: t.title,
+      details: t.details,
+      status: t.status,
+      spCost: t.spCost ?? 0,
+      userName: t.userName,
+      createdAt: t.createdAt,
+      resolvedAt: t.resolvedAt ?? null,
+      rejectedAt: t.rejectedAt ?? null,
+      rejectionReason: t.rejectionReason ?? '',
+      goldenResolutions: Array.isArray(t.goldenResolutions) ? t.goldenResolutions : [],
+      bannedUntil: callerUser?.goldenBannedUntil ?? null,
+      isBanned: callerUser?.isBanned ?? false,
+    }));
+
+    // 3. Ban window — derived from User-level goldenBannedUntil
+    //    (the canonical source of ban dates). When the user is
+    //    inside the window we surface a `banned` array with one
+    //    entry carrying the end timestamp + a flag.
+    const now = new Date();
+    const bannedUntilRaw = callerUser?.goldenBannedUntil;
+    const bannedUntil =
+      bannedUntilRaw && new Date(bannedUntilRaw).getTime() > now.getTime()
+        ? new Date(bannedUntilRaw).toISOString()
+        : null;
+    const banned = bannedUntil
+      ? [
+          {
+            userId: userId.toString(),
+            bannedUntil,
+            isActiveBan: true,
+            banHours: 72, // matches §5 of the admin spec; constant for now
+          },
+        ]
+      : [];
+
+    // 4. Activity log reconstructed from each ticket's statusHistory.
+    //    We emit one event per (raise, resolve, reject, re-resolve)
+    //    and sort newest-first so the user gets a single
+    //    chronological view of their golden ticket activity.
+    const activity: Array<{
+      type: 'ticket_raised' | 'resolved' | 'rejected' | 're_resolved';
+      ticketId: string;
+      title: string;
+      at: string;
+      status: string;
+      details: string;
+    }> = [];
+    for (const t of tickets) {
+      const base = {
+        ticketId: t._id.toString(),
+        title: t.title,
+      };
+      // Raise event — one per ticket, sourced from createdAt.
+      activity.push({
+        ...base,
+        type: 'ticket_raised',
+        at: new Date(t.createdAt).toISOString(),
+        status: 'Pending',
+        details: `Submitted as Golden (${t.spCost ?? 0} SP)`,
+      });
+      if (t.resolvedAt) {
+        activity.push({
+          ...base,
+          type: 'resolved',
+          at: new Date(t.resolvedAt).toISOString(),
+          status: 'Resolved',
+          details: t.resolutionSummary || 'Resolved by admin',
+        });
+      }
+      if (t.rejectedAt) {
+        activity.push({
+          ...base,
+          type: 'rejected',
+          at: new Date(t.rejectedAt).toISOString(),
+          status: 'Rejected',
+          details: t.rejectionReason || 'Rejected by admin',
+        });
+      }
+      // Re-resolve events — one per `goldenResolutions` entry.
+      if (Array.isArray(t.goldenResolutions)) {
+        for (const r of t.goldenResolutions) {
+          activity.push({
+            ...base,
+            type: 're_resolved',
+            at: new Date(r.createdAt).toISOString(),
+            status: 'Resolved',
+            details: `${r.adminName}: ${String(r.text || '').slice(0, 120)}`,
+          });
+        }
+      }
+    }
+    activity.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+
+    res.json({
+      history,
+      banned,
+      activity,
+      pagination: { total, page, limit, pages: Math.ceil(total / limit) },
+    });
+  } catch (err) {
+    adminLog.error(`getMyGoldenHistory failed: ${(err as Error).message}`);
+    res.status(500).json({ message: 'Failed to load Golden history.' });
+  }
+}
+
+/**
+ * GET /api/support/golden/:id
+ *
+ * Single Golden ticket scoped to its OWNER (or any admin). Mirrors
+ * the authorization shape of `getSupportRequest` in
+ * support-requests.controller.ts — a non-admin caller can only
+ * fetch their own ticket, and we 404 (not 403) when the ticket
+ * belongs to someone else so we don't leak existence.
+ *
+ * Returns the full ticket including `goldenResolutions[]`. This is
+ * the endpoint the in-app bell notification deep-links to when an
+ * admin resolves a Golden ticket, so the user lands on a view that
+ * actually renders the answer (the regular Session Support thread
+ * page does not).
+ */
+export async function getMyGoldenTicket(req: Request, res: Response): Promise<void> {
+  if (!(await requireFeatureOn(req, res, 'goldenTicket'))) return;
+  const userId = getAuthedUserId(req);
+  if (!userId) { res.status(401).json({ message: 'Authentication required.' }); return; }
+
+  const id = asStringParam(req.params.id);
+  if (!id || !Types.ObjectId.isValid(id)) {
+    res.status(400).json({ message: 'Invalid ticket id.' });
+    return;
+  }
+
+  const role = getAuthedUserRole(req);
+  const isAdmin = role === 'admin' || role === 'moderator';
+
+  try {
+    const request = await SupportRequest.findById(id).select('-__v').lean();
+    if (!request || !isGoldenTicket(request)) {
+      res.status(404).json({ message: 'Golden ticket not found.' });
+      return;
+    }
+    if (!isAdmin && request.userId.toString() !== userId.toString()) {
+      // Don't leak existence — return 404, not 403.
+      res.status(404).json({ message: 'Golden ticket not found.' });
+      return;
+    }
+    res.json({
+      ticket: {
+        ...request,
+        goldenResolutions: Array.isArray(request.goldenResolutions)
+          ? request.goldenResolutions
+          : [],
+      },
+    });
+  } catch (err) {
+    adminLog.error(`getMyGoldenTicket failed: ${(err as Error).message}`);
+    res.status(500).json({ message: 'Failed to load Golden ticket.' });
+  }
+}

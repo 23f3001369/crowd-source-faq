@@ -39,6 +39,16 @@ export const changePasswordSchema = z.object({
 export const updateProfileSchema = z.object({
   name:  z.string().min(2).max(100).optional(),
   email: z.string().email().optional(),
+  guidedTourCompleted: z.boolean().optional(),
+  avatar: z
+    .object({
+      url: z.string().url().max(1000),
+      publicId: z.string().max(200).optional(),
+      gcsUri: z.string().max(1000).optional(),
+      objectPath: z.string().max(1000).optional(),
+    })
+    .nullable()
+    .optional(),
 });
 
 // ─── FAQ ────────────────────────────────────────────────────────────────────────
@@ -76,6 +86,19 @@ export const voteReviewSchema = z.object({
 export const createPostSchema = z.object({
   title: z.string().min(10, 'Title must be at least 10 characters').max(300),
   body:  z.string().min(20, 'Body must be at least 20 characters').max(5000),
+  tags:  z.array(z.string()).min(1, 'At least one category tag is required').max(3),
+  attachments: z.array(
+    z.object({
+      url: z.string(),
+      publicId: z.string().optional(),
+      gcsUri: z.string().optional(),
+      objectPath: z.string().optional(),
+      width: z.number().optional(),
+      height: z.number().optional(),
+      format: z.string().optional(),
+      bytes: z.number().optional(),
+    })
+  ).optional(),
 });
 
 export const checkDuplicateSchema = z.object({
@@ -94,6 +117,18 @@ export const resolvePostSchema = z.object({
 
 export const reportPostSchema = z.object({
   reason: z.string().min(3).max(300),
+});
+
+// H4-2 (HIGH) fix: refresh token Zod schema. The previous
+// `refresh` controller read `req.body.refreshToken` raw — a 10MB
+// string would hit `jwt.verify` and exhaust memory. Bound it
+// between min 20 chars (longest reasonable JWT) and max 2048 chars
+// (plenty for a JWT + a few bytes of padding). The controller
+// already handles the `refreshToken: undefined` case (returns 400
+// 'Refresh token is required') so a missing field doesn't need a
+// separate Zod error.
+export const refreshSchema = z.object({
+  refreshToken: z.string().min(20).max(2048),
 });
 
 // ─── Search ─────────────────────────────────────────────────────────────────────
@@ -121,9 +156,17 @@ export const warnUserSchema = z.object({
 
 export const suspendUserSchema = z.object({
   userId:   z.string().regex(/^[0-9a-fA-F]{24}$/),
-  days:     z.coerce.number().int().min(1).max(365),
+  // 5.1 fix: the controller reads `duration` as a string like `"24h"` or `"7d"`,
+  // not a `days: number`. We accept BOTH for backward compat — `days` is
+  // still honored by the controller (converted internally to `${days}d`),
+  // but new callers should prefer `duration`.
+  duration: z.string().regex(/^\d+(h|d)$/).optional(),
+  days:     z.coerce.number().int().min(1).max(365).optional(),
   reason:   z.string().min(3).max(500),
-});
+}).refine(
+  (data) => data.duration !== undefined || data.days !== undefined,
+  { message: 'Either duration (e.g. "24h", "7d") or days (1-365) is required.' },
+);
 
 export const banUserSchema = z.object({
   userId: z.string().regex(/^[0-9a-fA-F]{24}$/),

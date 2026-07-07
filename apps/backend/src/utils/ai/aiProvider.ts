@@ -17,6 +17,7 @@
  */
 
 import AiConfig from '../../modules/ai/ai-config.model.js';
+import { logAiApiSuccess, logAiApiFailure } from './apiUsageLog.js';
 import { logger } from '../http/logger.js';
 
 // Names of supported AI vendors/providers (used throughout the backend).
@@ -156,7 +157,7 @@ export async function getPipelineProviderConfig(
     provider,
     apiKey,
     baseURL,
-    model: resolvedModel,
+    modelName: resolvedModel,
   };
 }
 
@@ -164,12 +165,12 @@ export interface ProviderConfig {
   provider: AIProvider;
   apiKey: string;
   baseURL: string;
-  model: string;
+  modelName: string;
   authHeader: 'x-api-key' | 'Authorization';
   needsAnthropicVersion: boolean;
 }
 
-const PROVIDER_DEFAULTS: Record<AIProvider, Omit<ProviderConfig, 'apiKey' | 'baseURL' | 'model'>> = {
+const PROVIDER_DEFAULTS: Record<AIProvider, Omit<ProviderConfig, 'apiKey' | 'baseURL' | 'modelName'>> = {
   anthropic: { provider: 'anthropic', authHeader: 'x-api-key', needsAnthropicVersion: true },
   openai: { provider: 'openai', authHeader: 'Authorization', needsAnthropicVersion: false },
   xai: { provider: 'xai', authHeader: 'Authorization', needsAnthropicVersion: false },
@@ -231,7 +232,7 @@ interface DbOverrides {
   minimax: { apiKey: string; baseURL: string; model: string };
   gemini: { apiKey: string; baseURL: string; model: string };
   custom: { apiKey: string; baseURL: string; model: string };
-};
+}
 
 let _cache: { value: DbOverrides; expiresAt: number } | null = null;
 const CACHE_TTL_MS = 5_000;
@@ -357,7 +358,7 @@ export async function resolveProviderAsync(provider?: AIProvider): Promise<Provi
     provider: chosen,
     apiKey,
     baseURL,
-    model,
+    modelName: model,
   };
 }
 
@@ -367,22 +368,22 @@ export async function resolveProviderAsync(provider?: AIProvider): Promise<Provi
  */
 export function resolveProvider(): ProviderConfig {
   if (process.env.ANTHROPIC_API_KEY) {
-    return { ...PROVIDER_DEFAULTS.anthropic, provider: 'anthropic', apiKey: process.env.ANTHROPIC_API_KEY, baseURL: envBaseUrl('anthropic'), model: envModel('anthropic') };
+    return { ...PROVIDER_DEFAULTS.anthropic, provider: 'anthropic', apiKey: process.env.ANTHROPIC_API_KEY, baseURL: envBaseUrl('anthropic'), modelName: envModel('anthropic') };
   }
   if (process.env.OPENAI_API_KEY) {
-    return { ...PROVIDER_DEFAULTS.openai, provider: 'openai', apiKey: process.env.OPENAI_API_KEY, baseURL: envBaseUrl('openai'), model: envModel('openai') };
+    return { ...PROVIDER_DEFAULTS.openai, provider: 'openai', apiKey: process.env.OPENAI_API_KEY, baseURL: envBaseUrl('openai'), modelName: envModel('openai') };
   }
   if (process.env.XAI_API_KEY) {
-    return { ...PROVIDER_DEFAULTS.xai, provider: 'xai', apiKey: process.env.XAI_API_KEY, baseURL: envBaseUrl('xai'), model: envModel('xai') };
+    return { ...PROVIDER_DEFAULTS.xai, provider: 'xai', apiKey: process.env.XAI_API_KEY, baseURL: envBaseUrl('xai'), modelName: envModel('xai') };
   }
   if (process.env.MINIMAX_API_KEY || process.env.MINIMAX_BASE_URL) {
-    return { ...PROVIDER_DEFAULTS.minimax, provider: 'minimax', apiKey: process.env.MINIMAX_API_KEY ?? '', baseURL: envBaseUrl('minimax'), model: envModel('minimax') };
+    return { ...PROVIDER_DEFAULTS.minimax, provider: 'minimax', apiKey: process.env.MINIMAX_API_KEY ?? '', baseURL: envBaseUrl('minimax'), modelName: envModel('minimax') };
   }
   if (process.env.GEMINI_API_KEY) {
-    return { ...PROVIDER_DEFAULTS.gemini, provider: 'gemini', apiKey: process.env.GEMINI_API_KEY, baseURL: envBaseUrl('gemini'), model: envModel('gemini') };
+    return { ...PROVIDER_DEFAULTS.gemini, provider: 'gemini', apiKey: process.env.GEMINI_API_KEY, baseURL: envBaseUrl('gemini'), modelName: envModel('gemini') };
   }
   if (process.env.CUSTOM_API_KEY) {
-    return { ...PROVIDER_DEFAULTS.custom, provider: 'custom', apiKey: process.env.CUSTOM_API_KEY, baseURL: envBaseUrl('custom'), model: envModel('custom') };
+    return { ...PROVIDER_DEFAULTS.custom, provider: 'custom', apiKey: process.env.CUSTOM_API_KEY, baseURL: envBaseUrl('custom'), modelName: envModel('custom') };
   }
   throw new Error(
     'No AI API key configured. Set one of:\n' +
@@ -434,7 +435,7 @@ export function getProvider(provider: AIProvider): ProviderConfig {
     provider,
     apiKey: process.env[ENV_KEY[provider]] ?? '',
     baseURL: envBaseUrl(provider),
-    model: envModel(provider),
+    modelName: envModel(provider),
   };
 }
 
@@ -458,42 +459,107 @@ export async function chatWithProvider(
   model?: string,
 ): Promise<string> {
   const config = await resolveProviderAsync(provider);
-  const modelName = model || config.model;
+  const modelName = model || config.modelName;
+  const startedAt = Date.now();
 
   if (provider === 'anthropic') {
-    const res = await fetch(`${config.baseURL}/messages`, {
-      method: 'POST',
-      headers: {
-        'x-api-key': config.apiKey,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({ model: modelName, messages, max_tokens: 4 }),
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${config.baseURL}/messages`, {
+        method: 'POST',
+        headers: {
+          'x-api-key': config.apiKey,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ model: modelName, messages, max_tokens: 4 }),
+      });
+    } catch (err) {
+      logAiApiFailure({
+        kind: 'inference',
+        provider,
+        modelName: modelName,
+        feature: 'chatWithProvider',
+        durationMs: Date.now() - startedAt,
+        error: (err as Error).message,
+      });
+      throw err;
+    }
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(`Anthropic error: ${err}`);
+      const wrapped = new Error(`Anthropic error: ${err}`);
+      logAiApiFailure({
+        kind: 'inference',
+        provider,
+        modelName: modelName,
+        feature: 'chatWithProvider',
+        durationMs: Date.now() - startedAt,
+        error: wrapped.message,
+        status: res.status,
+      });
+      throw wrapped;
     }
     const data = await res.json() as { content?: { text?: string }[] };
-    return data.content?.[0]?.text ?? '';
+    const text = data.content?.[0]?.text ?? '';
+    logAiApiSuccess({
+      kind: 'inference',
+      provider,
+      modelName: modelName,
+      feature: 'chatWithProvider',
+      durationMs: Date.now() - startedAt,
+      httpStatus: res.status,
+    });
+    return text;
   }
 
   // OpenAI / xAI / MiniMax all use chat completions
   const body: Record<string, unknown> = { model: modelName, messages };
-  const res = await fetch(`${config.baseURL}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      [config.authHeader]: `Bearer ${config.apiKey}`,
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${config.baseURL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        [config.authHeader]: `Bearer ${config.apiKey}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    logAiApiFailure({
+      kind: 'inference',
+      provider,
+      modelName: modelName,
+      feature: 'chatWithProvider',
+      durationMs: Date.now() - startedAt,
+      error: (err as Error).message,
+    });
+    throw err;
+  }
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`${provider} error: ${err}`);
+    const wrapped = new Error(`${provider} error: ${err}`);
+    logAiApiFailure({
+      kind: 'inference',
+      provider,
+      modelName: modelName,
+      feature: 'chatWithProvider',
+      durationMs: Date.now() - startedAt,
+      error: wrapped.message,
+      status: res.status,
+    });
+    throw wrapped;
   }
   const data = await res.json() as { choices?: { message?: { content?: string } }[] };
-  return data.choices?.[0]?.message?.content ?? '';
+  const text = data.choices?.[0]?.message?.content ?? '';
+  logAiApiSuccess({
+    kind: 'inference',
+    provider,
+    modelName: modelName,
+    feature: 'chatWithProvider',
+    durationMs: Date.now() - startedAt,
+    httpStatus: res.status,
+  });
+  return text;
 }
 
 // Backward-compat export — used by aiController.testProvider via dynamic import
@@ -504,12 +570,19 @@ export const chat = chatWithProvider;
  * Does NOT re-resolve — uses exactly what getPipelineProviderConfig returned.
  * Used by pipeline controllers (faqAudit, autoAnswer) that need per-pipeline
  * provider/model overrides from env vars.
+ *
+ * USER-FACING call sites should prepend the assistant persona:
+ *   import { getAssistantPersona } from './assistantPersona.js';
+ *   messages = [{ role: 'system', content: getAssistantPersona() + '\n\n' + taskPrompt }, ...]
+ *
+ * Back-office / admin call sites (extraction, audit, dedup) should NOT
+ * add the persona — their task prompts stand alone.
  */
 export async function chatWithConfig(
   config: ProviderConfig,
   messages: { role: string; content: string }[],
 ): Promise<string> {
-  const { provider, baseURL, apiKey, model, authHeader, needsAnthropicVersion } = config;
+  const { provider, baseURL, apiKey, modelName, authHeader, needsAnthropicVersion } = config;
   if (!apiKey) throw new Error(`No API key for provider '${provider}' — set ${provider.toUpperCase()}_API_KEY`);
 
   if (provider === 'anthropic') {
@@ -521,7 +594,7 @@ export async function chatWithConfig(
         'anthropic-version': '2023-06-01',
         ...(needsAnthropicVersion ? { 'anthropic-version': '2023-06-01' } : {}),
       },
-      body: JSON.stringify({ model, messages, max_tokens: 512 }),
+      body: JSON.stringify({ model: modelName, messages, max_tokens: 512 }),
     });
     if (!res.ok) {
       const err = await res.text();
@@ -538,7 +611,7 @@ export async function chatWithConfig(
       [authHeader]: `Bearer ${apiKey}`,
       'content-type': 'application/json',
     },
-    body: JSON.stringify({ model, messages }),
+    body: JSON.stringify({ model: modelName, messages }),
   });
   if (!res.ok) {
     const err = await res.text();
